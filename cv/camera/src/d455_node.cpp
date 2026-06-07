@@ -1,0 +1,1374 @@
+#include <act_d455/d455_node.hpp>
+
+#include <chrono>
+#include <cstring>
+#include "act_d455/kun.hpp"
+#include <filesystem>
+
+#define COLOR 1 //1是红， 0是蓝
+
+D455Node::D455Node(const std::string& config_path, const rclcpp::NodeOptions& options)
+: rclcpp::Node("d455_node", options), running_(false), 
+config_(7, {"red_r1", "red_r2", "blue_r1", "blue_r2", "gw_gan1", "gy_gan2", "wall"}, 
+        {{0, 0, 255}, {0, 0, 200}, {255, 0, 0}, {200, 0, 0}, {0, 255, 255}, {0, 200, 200}, {128, 128, 128}}, 
+        cv::Size(640, 640), 100, 0.6f, 0.65f),
+nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
+{
+    loadYamlConfig(config_path);
+
+	d455_log_.open("d455_log_.csv", std::ios::app);
+	std::time_t now = std::time(nullptr);
+    std::tm* localTime = std::localtime(&now);
+	if(d455_log_.is_open()) d455_log_ <<"  \n\n\n\n\n时间, " << put_time(localTime, "%Y-%m-%d %H:%M:%S") << " ========================" << endl;
+
+	display_ = this->declare_parameter<bool>("display", true);
+
+	save_frames_ = this->declare_parameter<bool>("save_frames", false);
+	frames_dir_ = this->declare_parameter<std::string>("frames_dir", std::string("frames"));
+	frame_ext_ = this->declare_parameter<std::string>("frame_ext", std::string("png"));
+	if (!frame_ext_.empty() && frame_ext_.front() == '.')
+	{
+		frame_ext_.erase(frame_ext_.begin());
+	}
+
+	if (save_frames_)
+	{
+		try
+		{
+			std::filesystem::create_directories(frames_dir_);
+		}
+		catch (const std::exception& e) 
+		{
+			RCLCPP_ERROR(this->get_logger(), "Failed to create frames dir '%s': %s", frames_dir_.c_str(), e.what());
+			save_frames_ = false;
+		}
+	}
+	odom_sub_ = this->create_subscription<nav_msgs::msg::Odometry>(
+            "/map_to_base_link", rclcpp::SensorDataQoS(),
+            std::bind(&D455Node::odom_callback, this, std::placeholders::_1));
+
+    R_bw_ <<
+    -0.00763784,   0.999536,    0.0295001,
+    -0.999861,   -0.00719551,  -0.0150713,
+    -0.0148521, -0.0296111,   0.999451;
+
+    cam_pos_ <<
+    2051.47,
+    10538.9,
+    909.578;
+
+    // rclcpp::QoS qos(50);
+    // qos.best_effort();
+
+    // odom_highfreq_subscriber_ = this->create_subscription<nav_msgs::msg::Odometry>(
+    //     "odin1/odometry_highfreq",
+    //     qos,
+    //     std::bind(&D455Node::odom_callback, this, std::placeholders::_1));
+            
+    // d455_sub_ = this->creat_subscription<base_interfaces::msg::AlignStart>
+    // ("",rclcpp::SensorDataQoS(),std::bind(&D455Node::d455_callback, this, std::placeholders::_1))
+    
+    yolo_detector_  = new trt_yolo::YOLOv8("src/cv/best_59.engine",config_);
+    yolo_detector_->make_pipe(true);
+
+	kfs_show_cloud = std::make_shared<PointCloud>();
+    gan_show_cloud = std::make_shared<PointCloud>();
+
+	d455_ = std::make_shared<ActD455>(act_d455_params_);
+	pcl_ = std::make_shared<Pclprocess>(pcl_params_);
+
+	gstate_ = std::make_shared<Grid_State>(grid_params_);
+
+	align_ = std::make_shared<Align>();
+    pick_ = std::make_shared<Pick>();
+    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_66/best_66.engine");
+
+
+    if_start_unet_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
+        std::bind(&D455Node::task_callback, this, std::placeholders::_1));
+
+
+
+	std::string base = "zhutianxiang/avt_d455";
+	std::string ext = ".avi";
+	int counter = 0;
+	std::string video_path = base + ext;
+
+	while (std::filesystem::exists(video_path)) {
+		video_path = base + "_" + std::to_string(++counter) + ext;
+	}
+
+	video_writer.open(video_path, cv::VideoWriter::fourcc('M', 'J', 'P', 'G'), 60, frame_size,true);
+	if (!video_writer.isOpened()) {
+		std::cerr << "无法创建视频文件！\n";
+	}
+
+	float distance = 0.0f;
+	float angle_deg = 0.0f;
+	publisher_1 = this->create_publisher<base_interfaces::msg::Align>("d455/align", 10);
+    // RCLCPP_INFO(this->get_logger(), "D455自定义消息发布者已初始化");
+    tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
+
+	running_.store(true);
+
+    cout << "Create D455Node" << endl;
+}
+
+void D455Node::task_callback(const base_interfaces::msg::GridStart::SharedPtr msg)
+{
+    if(msg->start != -1) 
+    {
+        std::unique_lock<std::mutex> lock(start_mutex_);
+        start_unet_ = msg->start;
+    } 
+}
+
+void D455Node::loadYamlConfig(const std::string& path) 
+{
+    try {
+        cv::FileStorage fs(path, cv::FileStorage::READ);
+        
+        if (!fs.isOpened()) {
+            RCLCPP_ERROR(this->get_logger(), "无法打开配置文件: %s", path.c_str());
+            return;
+        }
+
+        // --- 读取参数 ---
+        fs["Field"] >> field_;
+        fs["Field"] >> grid_params_.field;
+        
+        fs["ShowParams"] >> show_params_;
+        fs["Showtest"] >> show_test_;
+
+        fs["D455Node"]["Display"] >> default_display_;
+        fs["D455Node"]["DispersionThreshold"] >> dispersion_threshold_;
+        fs["D455Node"]["Pcl_params"]["white_gray_min"] >> pcl_params_.white_gray_min;
+        fs["D455Node"]["Pcl_params"]["white_gray_max"] >> pcl_params_.white_gray_max;
+        fs["D455Node"]["Pcl_params"]["white_hsv_min"] >> pcl_params_.white_hsv_min;
+        fs["D455Node"]["Pcl_params"]["white_hsv_max"] >> pcl_params_.white_hsv_max;
+
+        fs["D455Node"]["ActD_params"]["bag_path"] >> act_d455_params_.bag_path;
+
+        fs.release();
+
+        // --- 参数打印输出 ---
+        if (show_params_) {
+            RCLCPP_INFO(this->get_logger(), "----------- D455Node 参数加载成功 -----------");
+            RCLCPP_INFO(this->get_logger(), "场馆设置 (Field): %d", field_);
+            RCLCPP_INFO(this->get_logger(), "显示开关 (Display): %s", default_display_ ? "ON" : "OFF");
+            
+            RCLCPP_INFO(this->get_logger(), "Pcl_params -> Gray 范围: [%d, %d]", 
+                        pcl_params_.white_gray_min, pcl_params_.white_gray_max);
+            
+            // cv::Scalar 打印 H, S, V 分量
+            RCLCPP_INFO(this->get_logger(), "Pcl_params -> HSV Min: [%.1f, %.1f, %.1f]", 
+                        pcl_params_.white_hsv_min[0], pcl_params_.white_hsv_min[1], pcl_params_.white_hsv_min[2]);
+            
+            RCLCPP_INFO(this->get_logger(), "Pcl_params -> HSV Max: [%.1f, %.1f, %.1f]", 
+                        pcl_params_.white_hsv_max[0], pcl_params_.white_hsv_max[1], pcl_params_.white_hsv_max[2]);
+
+            
+            RCLCPP_INFO(this->get_logger(), "--------------------------------------------");
+        }
+        else
+        {
+            RCLCPP_INFO(this->get_logger(), "----------- D455Node 参数不显示 -----------");
+        }
+
+    } catch (const std::exception& e) {
+        RCLCPP_ERROR(this->get_logger(), "D455Node 解析 YAML 时出错: %s", e.what());
+    }
+}
+
+void D455Node::start()
+{
+    cout << "Start D455Node" << endl;
+    if(d455_log_.is_open()) d455_log_ << " Start D455Node "  << endl;
+    running_.store(true);
+    has_frame_ = false;
+    retain_.store(true);
+    //成员函数指针必须绑定对象
+	capture_thread_ = std::thread(&D455Node::captureLoop, this);
+    process_unet_grid_thread_ = std::thread(&D455Node::process_unet_Loop, this);
+	process_yolo_kfs_thread_ = std::thread(&D455Node::process_yolo_Loop, this);
+	process_yolo_wall_thread_ = std::thread(&D455Node::process_wall_Loop, this);
+
+    process_state_thread_ = std::thread(&D455Node::process_state_Loop, this);
+    display_thread_ = std::thread(&D455Node::displayLoop, this);
+ 
+	align_thread_ = std::thread(&D455Node::alignLoop,this); 
+    pick_thread_ = std::thread(&D455Node::pickLoop,this); 
+
+    // 2. 给线程命名 (千万注意：名字不能超过15个字符！)
+    // pthread_setname_np(capture_thread_.native_handle(), "capture");
+    // pthread_setname_np(process_yolo_kfs_thread_.native_handle(), "yolo");
+    // pthread_setname_np(process_yolo_wall_thread_.native_handle(), "wall");
+    // pthread_setname_np(process_state_thread_.native_handle(), "state_proc");
+    // pthread_setname_np(display_thread_.native_handle(), "display");
+    // pthread_setname_np(align_thread_.native_handle(), "align");
+    // pthread_setname_np(pick_thread_.native_handle(), "pick");
+}
+
+D455Node::~D455Node()
+{
+	stop();
+	if (video_writer.isOpened()) {
+        video_writer.release(); 
+    }
+    if (d455_log_.is_open()) {
+        d455_log_.close();
+    }
+}
+
+D455Node::Dataframe::Dataframe(const Dataframe& other)
+	: src(other.src.clone()), depth(other.depth.clone())
+{}
+
+D455Node::Dataframe& D455Node::Dataframe::operator=(const Dataframe& other)
+{
+	if (this != &other)
+	{
+		src = other.src.clone();
+		depth = other.depth.clone();
+	}
+	return *this;
+}
+
+D455Node::Dataframe::Dataframe(Dataframe&& other)
+	: src(std::move(other.src)), depth(std::move(other.depth))
+{}
+
+D455Node::Dataframe& D455Node::Dataframe::operator=(Dataframe&& other)
+{
+	if (this != &other)
+	{
+		src = std::move(other.src);
+		depth = std::move(other.depth);
+	}
+	return *this;
+}
+
+void D455Node::stop()
+{
+    cout << "Stop D455" << endl;
+    if(d455_log_.is_open()) d455_log_ << " Stop D455 "  << endl;
+    running_ = false;
+
+    try {
+        d455_->pipe.stop();
+        cout << "[ActD455] pipeline stopped successfully." << endl;
+    } catch (...) {cout << "d455关闭失败" << endl;}
+
+    get_frame_.notify_all();
+    get_wall_.notify_all();
+    get_wall_or_grid_cloud_.notify_all();
+    final_state_.notify_all();
+
+    if (capture_thread_.joinable()) capture_thread_.join();
+    if (process_unet_grid_thread_.joinable()) process_unet_grid_thread_.join();
+    if (process_yolo_kfs_thread_.joinable()) process_yolo_kfs_thread_.join(); 
+    if (process_yolo_wall_thread_.joinable()) process_yolo_wall_thread_.join(); 
+    if (process_state_thread_.joinable()) process_state_thread_.join(); 
+    if (display_thread_.joinable()) display_thread_.join();
+    if (pick_thread_.joinable()) pick_thread_.join();
+    if (align_thread_.joinable()) align_thread_.join();
+
+    cv::destroyAllWindows();
+    cout << "d455 stop 结束" << endl;
+}
+
+// 新增：里程计回调
+void D455Node::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg) {
+	// 读取 /base_link_to_init 的位姿，单位转换与原逻辑保持一致
+	const auto &p = msg->pose.pose.position;
+	const auto &o = msg->pose.pose.orientation;
+
+    // float x1;
+	lidar_x_ = static_cast<float>(p.x * 1000.0);  // m -> mm
+	lidar_y_ = static_cast<float>(p.y * 1000.0);
+	lidar_z_ = static_cast<float>(p.z * 1000.0);
+    lidar_x_pick_= static_cast<float>(p.x * 1000.0);
+    lidar_y_pick_= static_cast<float>(p.y * 1000.0);
+
+	tf2::Quaternion q(o.x, o.y, o.z, o.w);
+	double roll, pitch, yaw;
+	tf2::Matrix3x3(q).getRPY(roll, pitch, yaw);
+	lidar_roll_  = static_cast<float>(roll  / M_PI * 180.0);
+	lidar_pitch_ = static_cast<float>(pitch / M_PI * 180.0);
+	lidar_yaw_   = static_cast<float>(yaw   / M_PI * 180.0);
+    pick_->getCoordinate(lidar_x_pick_, lidar_y_pick_, -yaw);
+    Eigen::Vector3d p_car_w(lidar_x_,lidar_y_,lidar_z_);
+    R_wb_ = eulerZYX(lidar_yaw_,lidar_pitch_,lidar_roll_);
+
+    Eigen::Vector3d t_car_cam(-11.0, 199+57-8, 431+80);
+    
+    {
+        std::lock_guard<std::mutex> lock(mut_pos_);
+        cam_pos_ = p_car_w + R_wb_ * t_car_cam;
+        R_bw_ = R_wb_.transpose();
+    }
+
+    // cout << "cam_pos_:\n" << cam_pos_ << "\nR_bw_\n" << R_bw_ << std::endl;
+
+	gstate_->getlidar(lidar_x_, lidar_y_, lidar_z_, lidar_yaw_, lidar_roll_, lidar_pitch_);
+}
+
+float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthimg, std::ostringstream& oss, int& row, int& col)
+{
+	pPointCloud srcCloud = std::make_shared<PointCloud>();
+    pPointCloud src_Cloud = std::make_shared<PointCloud>();
+    
+	srcCloud = d455_->PointCloudGenerateRect(roiRect,depthimg,2,1);
+	
+    // cout << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << endl;
+
+	if (srcCloud->points.size() < 1000) 
+	{
+        if(d455_log_.is_open()) oss << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << " 小于 " << 500 << " ";
+		return -1.f;
+	}
+
+    // ================== 抽样计算点云离散程度 ================== 0.005ms
+    Eigen::Vector4f centroid;
+    pcl::compute3DCentroid(*srcCloud, centroid);
+    // 抽样计算方差
+    float variance = 0.0f;
+    int sample_count = 0;
+    size_t step = 10;
+    for (size_t i = 0; i < srcCloud->points.size(); i += step)
+    {
+        const auto& point = srcCloud->points[i];
+        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) continue;
+        float dx = point.x - centroid[0];
+        float dy = point.y - centroid[1];
+        float dz = point.z - centroid[2];
+        variance += (dx * dx + dy * dy + dz * dz);
+        sample_count++;
+    }
+    if (sample_count > 0) variance /= static_cast<float>(sample_count);
+    float dispersion_std_dev = std::sqrt(variance);
+    // cout << " (row:" << row <<  ",col:" << col << ") " << " 点云标准差：" << dispersion_std_dev << endl;
+    if (dispersion_std_dev > dispersion_threshold_)
+    {
+        if(d455_log_.is_open()) oss << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云标准差：" << dispersion_std_dev << " 小于 " << dispersion_threshold_ << " ";
+        return -1.f;
+    }
+    // ==================
+
+	float distance = pcl_->PlaneSegmentation(srcCloud, src_Cloud, 10);
+
+    // cout << " (row:" << row <<  ",col:" << col << ") " << "【处理后】点云数：" << src_Cloud->points.size() << " 深度：" << distance << endl;
+    
+	*kfs_show_cloud += *srcCloud;
+
+    return distance;   
+}
+
+float D455Node::computeDepthByMode(int current_mode, float lidar_x, pPointCloud& wall_cloud_out)
+{
+    float depth_value = 0.0f;
+
+    // RCLCPP_INFO(this->get_logger(), "进入模式：%d", current_mode);
+
+    switch (current_mode)
+    {
+        case 0: 
+        {
+            // std::lock_guard<std::mutex> lock(disp_trt_mutex_);
+            
+            depth_value = trt_seg_->Getdep();
+            
+            break;
+        }
+        case 1: // wallCloud
+        {
+            pPointCloud wall_cloud = d455_->GetWallCloud();
+            float distance_wall = pcl_->PlaneSegmentation(wall_cloud, wall_cloud_out, 10); // 0.8ms
+            depth_value = distance_wall + 10.0f;
+            // wall_cloud_viewer_.add_cloud(wall_cloud_out, "wall");
+            // pcl_->add_points(wall_cloud, "wall_raw");
+            // pcl_->add_points(wall_cloud_out, "wall_out"); // 3ms 5000点
+            break;
+        } 
+        default:
+            break;
+    }
+    return depth_value;
+}
+
+// 传入你当前需要匹配的时间戳，返回离它最近的 quads 向量
+std::vector<Unet::Quad2D> D455Node::getNearestQuads(std::chrono::steady_clock::time_point target_time)
+{
+    std::lock_guard<std::mutex> lock(buffer_mutex_); 
+
+    if (quads_buffer_.empty()) {
+        return std::vector<Unet::Quad2D>(); 
+    }
+
+    size_t best_index = 0;
+    auto min_diff = std::abs(std::chrono::duration_cast<std::chrono::microseconds>(
+        quads_buffer_[0].timestamp - target_time).count());
+
+    for (size_t i = 1; i < quads_buffer_.size(); ++i) {
+        auto current_diff = std::abs(std::chrono::duration_cast<std::chrono::microseconds>(
+            quads_buffer_[i].timestamp - target_time).count());
+        
+        if (current_diff < min_diff) {
+            min_diff = current_diff;
+            best_index = i;
+        }
+    }
+
+    auto max_allow_diff = std::chrono::milliseconds(200);
+    if (std::chrono::microseconds(min_diff) > max_allow_diff) { return std::vector<Unet::Quad2D>(); }
+
+    return quads_buffer_[best_index].quads;
+}
+
+//void D455Node::d455_callback(const base_interfaces::msg::AlignStart::ConstSharedPtr msg)
+//{
+//  this->kfs_mode = msg->;
+//  this_>gan_mode = msg->;
+//}
+void D455Node::captureLoop()
+{
+	using namespace std::chrono_literals;
+
+    if(!running_) 
+    {
+        cout << "d455无法run" << endl;
+        if(d455_log_.is_open()) d455_log_ << " d455无法run "  << endl;
+    }
+    if(running_.load() && rclcpp::ok())
+    {
+        if(d455_log_.is_open()) d455_log_ << " start captureLoop "  << endl;
+    }
+
+	while (running_.load() && rclcpp::ok())
+	{
+		while (running_.load() && rclcpp::ok() && d455_->Init() == false)
+		{
+			RCLCPP_WARN(this->get_logger(), "ActD455 Init failed, retrying...");
+			std::this_thread::sleep_for(300ms);
+		}
+		if (!running_.load() || !rclcpp::ok())
+		{
+			break;
+		}
+		while (running_.load() && rclcpp::ok())
+		{
+			auto now = buffer::Timestamp::now();
+			if (!d455_->Update())
+			{
+				RCLCPP_WARN(this->get_logger(), "ActD455 Update failed, re-initializing...");
+				d455_->release();
+				std::this_thread::sleep_for(300ms);
+				break;  // 回到外层重新 Init
+			}    
+            cv::Mat frame;
+            frame = d455_->GetSrcImage().clone();
+
+            // if(is_identify_KFS_)
+            // {
+            //     cout << "进入一次 is_identify_KFS_" << endl;
+            //     is_identify_KFS_ = false;
+            // }
+
+            // if(is_identify_KFS_)
+            // {
+            //     if(dealImg_.Deal(frame))
+            //     {
+            //         cv::waitKey(1);
+            //     }
+            //     else
+            //     {
+            //         is_identify_KFS_ = false;
+            //         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            //         dealImg_.cleanup();
+            //     }
+            // }
+            
+            if (!frame.empty()) video_writer.write(frame);
+            
+            // video_writer.write(dataframe_pick_.src);
+ 
+            {
+                std::unique_lock<std::mutex> lock(frame_mutex);
+                depth_ = d455_ ->GetDepthImage().clone();
+                // src_ = d455_->GetSrcImage().clone();
+                src_ = cv::imread("/home/lx/frame/test.jpg");
+                has_frame_ = true;
+            } 
+            get_frame_.notify_all();
+
+            {
+                std::unique_lock<std::mutex> lock(frame_unet_mutex);
+                // src_unet_ = d455_->GetSrcImage().clone();
+                src_unet_ = cv::imread("/home/lx/frame/test.jpg");
+                has_frame_unet_ = true;
+            }
+            get_frame_unet_.notify_all();
+            // if(save_video_)
+            // {
+            //     if(running_)
+            //     {
+            //         video_saver_.start(frame);
+            //         video_saver_.write(frame);
+            //     }
+            //     else if(!running_)
+            //     {
+            //         cout << "结束d455录像" << endl;
+            //         video_saver_.stop();                    
+            //     }
+            // }
+
+			auto finish = buffer::Timestamp::now();
+			auto diff = buffer::Timestamp::diff(finish, now);
+			// std::cout << "采集循环时间间隔: " << diff/1000.0 << " ms" << endl;
+		}
+	}
+    cout << -1 << endl;
+}
+
+void D455Node::process_unet_Loop()
+{
+    while (running_.load() && rclcpp::ok())
+    {
+        auto now_unet = buffer::Timestamp::now();
+
+        cv::Mat img;
+        {
+            std::unique_lock<std::mutex> lock(frame_unet_mutex);
+            get_frame_unet_.wait(lock,[&]{
+                return (has_frame_unet_ || !rclcpp::ok() || !running_);
+            });
+            if(!rclcpp::ok() || !running_) break;
+            img = src_unet_;
+            has_frame_unet_ = false;
+        }
+
+        auto finish = buffer::Timestamp::now();
+        auto diff = buffer::Timestamp::diff(finish, now_unet);
+        // std::cout << "trt_seg_更新图像时间间隔: " << diff/1000.0 << " ms" << endl;
+
+        Eigen::Matrix3d R_bw;
+        Eigen::Vector3d cam_pos;
+
+        {
+            std::lock_guard<std::mutex> lock(mut_pos_);
+            cam_pos = cam_pos_;
+            R_bw = R_bw_;
+        }
+
+        if(start_unet_ == 1)  {
+            trt_seg_->detect(img);
+
+            std::vector<Unet::Quad2D> quads = trt_seg_->getgridquads(img, R_bw, cam_pos); 
+            distances_ = fitPixelScale(quads);
+
+            gstate_ -> publish_dist(distances_);
+
+            auto finish_unet = buffer::Timestamp::now();
+            auto diff_unet = buffer::Timestamp::diff(finish_unet, now_unet);
+            // std::cout << "trt_seg_检测时间间隔: " << diff_unet/1000.0 << " ms" << endl;
+
+            QuadsData new_data;
+            new_data.quads = std::move(quads);
+            new_data.timestamp = std::chrono::steady_clock::now();
+            {
+                std::lock_guard<std::mutex> lock(buffer_mutex_);
+                quads_buffer_.push_back(std::move(new_data));
+                while (quads_buffer_.size() > max_buffer_size_){
+                    quads_buffer_.erase(quads_buffer_.begin());
+                }
+            }
+        }
+    }
+}
+
+
+cv::Mat D455Node::keep_roi(const cv::Mat& src, const cv::Rect& roi) 
+{
+    cv::Mat dst = cv::Mat::zeros(src.size(), src.type());
+    cv::Rect valid_roi = roi & cv::Rect(0, 0, src.cols, src.rows);
+    if (valid_roi.width > 0 && valid_roi.height > 0) {
+        src(valid_roi).copyTo(dst(valid_roi));
+    }
+    return dst;
+}
+
+void D455Node::process_yolo_Loop()
+{ 
+    if(d455_log_.is_open()) d455_log_ << " start process_yolo_Loop "  << endl;
+
+    while (running_.load() && rclcpp::ok())
+	{ 
+        auto now = buffer::Timestamp::now();
+
+        cv::Mat img;
+        cv::Mat dep;  
+        cv::Mat white_mask; 
+        std::vector<trt_yolo::det::Object> objs_kfs_red_r1;
+        std::vector<trt_yolo::det::Object> objs_kfs_red_r2;
+        std::vector<trt_yolo::det::Object> objs_kfs_blue_r1;
+        std::vector<trt_yolo::det::Object> objs_kfs_blue_r2;
+        std::vector<trt_yolo::det::Object> objs_gw_gan1;
+        std::vector<trt_yolo::det::Object> objs_gy_gan2;
+        std::vector<trt_yolo::det::Object> objs_wall;
+
+        {
+            std::unique_lock<std::mutex> lock(frame_mutex);
+            get_frame_.wait(lock,[&]{
+                return (has_frame_ || !rclcpp::ok() || !running_);
+            }); 
+            if(!rclcpp::ok() || !running_) 
+            {
+                break;
+            }
+            img = src_;  
+            dep = depth_; 
+            has_frame_ = false;   
+        }  
+
+        // auto now_unet = buffer::Timestamp::now();
+
+        // if(start_unet_ == 1)  trt_seg_->detect(img);
+
+        // auto finish_unet = buffer::Timestamp::now();
+        // auto diff_unet = buffer::Timestamp::diff(finish_unet, now_unet);
+        // std::cout << "trt_seg_检测时间间隔: " << diff_unet/1000.0 << " ms" << endl;
+
+        //-----
+        dataframe_align_.depth = dep;
+        dataframe_align_.src = img;
+        if (!dataframe_align_.src.empty() && !dataframe_align_.depth.empty())
+        {
+            align_buffer_.write(std::move(dataframe_align_));
+        }
+        //-----
+        dataframe_pick_.depth = dep;
+        dataframe_pick_.src = img;
+        if (!dataframe_pick_.src.empty() && !dataframe_pick_.depth.empty())
+        {
+            pick_buffer_.write(std::move(dataframe_pick_));
+        }
+
+        yolo_detector_->detect(img);
+        
+        if (display_) 
+        {
+            std::lock_guard<std::mutex> lock(disp_mutex_);
+            disp_ = yolo_detector_->res;
+            disp_src_ = img; 
+        }
+        if(yolo_detector_->objs.empty()) 
+        {
+            std::this_thread::sleep_for(10ms);
+            continue;
+        }
+
+        for (const auto& obj : yolo_detector_->objs)
+        {
+            int lab = obj.label;
+            switch (lab)
+            {
+                case 0: objs_kfs_red_r1.push_back(obj); break;
+                case 1: objs_kfs_red_r2.push_back(obj); break;
+                case 2: objs_kfs_blue_r1.push_back(obj); break;
+                case 3: objs_kfs_blue_r2.push_back(obj); break;
+                case 4: objs_gw_gan1.push_back(obj); break;
+                case 5: objs_gy_gan2.push_back(obj); break;
+                case 6: objs_wall.push_back(obj); break;        
+            default:
+                break;
+            }
+        }
+        // if(d455_log_.is_open()) d455_log_ << "\n--【 墙数量：" << objs_wall.size() 
+        //                             << " 红块r1数量：" << objs_kfs_red_r1.size() 
+        //                             << " 红块r2数量：" << objs_kfs_red_r2.size() 
+        //                             << " 蓝块r1数量：" << objs_kfs_blue_r1.size() 
+        //                             << " 蓝块r2数量：" <<  objs_kfs_blue_r2.size() << "】--\n";
+
+        //-----
+        {
+            std::unique_lock<std::mutex> lock(gan_mut_);
+            objs_gw_gan1_ = objs_gw_gan1;
+            objs_gy_gan2_ = objs_gy_gan2;
+        }
+
+        //-----
+        if(!objs_wall.empty()) 
+        {
+            white_mask = pcl_->extract_white(img); // 0.8 ms
+            if (display_) 
+            {
+                std::lock_guard<std::mutex> lock(disp_mutex_);
+                show_wall_ = keep_roi(white_mask, objs_wall[0].rect); 
+            }
+        }
+
+        {
+            std::unique_lock<std::mutex> lock(compute_state_);
+            if(retain_ && start_unet_ == 1 )
+            {
+                objs_kfs_red_state_.clear();
+                objs_kfs_red_state_.reserve(objs_kfs_red_r1.size() + objs_kfs_red_r2.size());
+                objs_kfs_red_state_.insert(objs_kfs_red_state_.end(), objs_kfs_red_r1.begin(), objs_kfs_red_r1.end());
+                objs_kfs_red_state_.insert(objs_kfs_red_state_.end(), objs_kfs_red_r2.begin(), objs_kfs_red_r2.end());
+
+                objs_kfs_blue_state_.clear();
+                objs_kfs_blue_state_.reserve(objs_kfs_blue_r1.size() + objs_kfs_blue_r2.size());
+                objs_kfs_blue_state_.insert(objs_kfs_blue_state_.end(), objs_kfs_blue_r1.begin(), objs_kfs_blue_r1.end());
+                objs_kfs_blue_state_.insert(objs_kfs_blue_state_.end(), objs_kfs_blue_r2.begin(), objs_kfs_blue_r2.end());
+                
+                latest_img_state_ = img;
+                latest_depth_state_ = dep;
+                objs_wall_ = objs_wall;
+                white_mask_ = white_mask;
+                detect_obj_wall_ = true;
+                has_obj_kfs_ = true;
+
+                quads_timestamp_ = std::chrono::steady_clock::now();
+                // if(d455_log_.is_open()) d455_log_ << "\n 进入 retain_ \n";
+            }
+            // if(d455_log_.is_open()) 
+            // {
+            //     d455_log_ << "\n--【 墙数量：" << objs_wall_.size() 
+            //                                     << " 红块数量：" << objs_kfs_red_state_.size() 
+            //                                     << " 蓝块数量：" <<  objs_kfs_blue_state_.size() << "】--\n";
+            // }
+        }
+        retain_ = false;
+        get_wall_.notify_one();
+        
+        //-----给pick线程
+        {
+            std::unique_lock<std::mutex> lock(kfs_mut_);
+            objs_kfs_red_r1_ = objs_kfs_red_r1;
+            objs_kfs_red_r2_ = objs_kfs_red_r2;
+            objs_kfs_blue_r1_ = objs_kfs_blue_r1;
+            objs_kfs_blue_r2_ = objs_kfs_blue_r2;
+        }
+        final_state_.notify_one();
+
+        auto finish = buffer::Timestamp::now();
+        auto diff = buffer::Timestamp::diff(finish, now);
+        // std::cout << "整个模型时间间隔: " << diff/1000.0 << " ms" << endl;
+    } 
+    cout << "process_yolo_Loop 线程退出" << endl;
+}
+
+//计算九宫格深度
+void D455Node::process_wall_Loop()
+{ 
+	while (running_.load() && rclcpp::ok())
+	{ 
+        auto now = buffer::Timestamp::now();
+        auto now0 = buffer::Timestamp::now();
+
+        cv::Mat img, white_mask; 
+        std::vector<trt_yolo::det::Object> objs_wall;
+        int current_mode{0};
+        float nine_square_depth_value{0.f};
+        float lidar_x{1500.f};
+        {
+            std::unique_lock<std::mutex> lock(lidar_);
+            lidar_x = lidar_x_ ;
+        }
+        {   // 19ms
+            std::unique_lock<std::mutex> lock(compute_state_);
+            get_wall_.wait(lock,[&]{
+                return (detect_obj_wall_ || !rclcpp::ok() || !running_);
+            }); 
+            if(!rclcpp::ok() || !running_) 
+            {
+                break;
+            }
+            objs_wall = objs_wall_;
+            white_mask = white_mask_;
+        }
+        detect_obj_wall_ = false;
+
+        auto finish0 = buffer::Timestamp::now();
+        auto diff0 = buffer::Timestamp::diff(finish0, now0);
+        // std::cout << "等待时间 间隔: " << diff0/1000.0 << " ms" << endl;
+
+        auto now1 = buffer::Timestamp::now();
+
+        // bool is_valid = (objs_wall[0].rect.height != 0) &&
+        //                 (objs_wall[0].rect.width != 0) &&
+        //                 (objs_wall[0].rect.width / objs_wall[0].rect.height > 1/5) &&
+        //                 (objs_wall[0].rect.height / objs_wall[0].rect.width > 1/5);
+
+        if(!objs_wall.empty()) // 3ms: 得到 wall【原始】点云
+        {
+            d455_->PointCloudGenerateRectandMask(objs_wall[0].rect,white_mask,lidar_x);//得到wallCloud点云
+            pPointCloud wall_cloud = d455_->GetWallCloud(); 
+            // RCLCPP_INFO(this->get_logger(), "[原始]wall_cloud->points.size(): %d", wall_cloud->points.size());
+            if(wall_cloud->points.size() > 3000) 
+            {
+                current_mode = 1;
+            }
+        }
+        else
+        {
+            current_mode = 0; 
+        }
+        auto finish1 = buffer::Timestamp::now();
+        auto diff1 = buffer::Timestamp::diff(finish1, now1);
+        // std::cout << "得到 wall【原始】点云间隔: " << diff1/1000.0 << " ms" << endl;
+
+        auto now2 = buffer::Timestamp::now();
+
+        std::ostringstream oss;
+        pPointCloud wall_cloud_out = std::make_shared<PointCloud>();
+
+        current_mode = 0;
+
+        Eigen::Matrix3d R_bw;
+        Eigen::Vector3d cam_pos;
+
+        {
+            std::lock_guard<std::mutex> lock(mut_pos_);
+            cam_pos = cam_pos_;
+            R_bw = R_bw_;
+        }
+        cv::Mat latest_img_state;
+        {
+            std::unique_lock<std::mutex> lock(compute_state_);
+            latest_img_state = latest_img_state_;
+        }
+
+        // quads_ = trt_seg_->getgridquads(latest_img_state, R_bw, cam_pos); 
+        // distances_ = fitPixelScale(quads_);
+
+        // gstate_ -> publish_dist(distances_);
+
+        nine_square_depth_value  = computeDepthByMode(current_mode, lidar_x, wall_cloud_out); // 1ms
+
+        if(d455_log_.is_open()) oss << std::fixed << std::setprecision(1) 
+                                    << " lidar_x: " << lidar_x
+                                    << " cloud_state_模式: " << current_mode
+                                    << " yolo九宫格深度: " << nine_square_depth_value 
+                                    << " wall【处理后】点云数: " << wall_cloud_out->size();
+        {
+            std::unique_lock<std::mutex> lock(compute_state_);
+            nine_square_depth_value_ = nine_square_depth_value;   
+            has_float_ = true; 
+        }     
+        final_state_.notify_one();   
+
+        if (d455_log_.is_open()) 
+        {
+            d455_log_ << oss.str() << "\n-------------------------------\n";
+            // d455_log_.flush();
+        }  
+
+        auto finish2 = buffer::Timestamp::now();
+        auto diff2 = buffer::Timestamp::diff(finish2, now2);
+        // std::cout << "计算九宫格深度 间隔: " << diff2/1000.0 << " ms" << endl;
+
+        auto finish = buffer::Timestamp::now();
+        auto diff = buffer::Timestamp::diff(finish, now);
+        // std::cout << "process_wall_Loop时间间隔: " << diff/1000.0 << " ms" << endl;
+    } 
+    if(show_test_) cout << "process_wall_Loop 线程退出" << endl;
+}
+
+void D455Node::process_state_Loop()
+{
+    while (running_.load() && rclcpp::ok())
+    {
+        auto now = buffer::Timestamp::now();
+
+        std::ostringstream oss;
+        static int no;
+        std::vector<trt_yolo::det::Object> objs_kfs_red_state;
+        std::vector<trt_yolo::det::Object> objs_kfs_blue_state;
+        std::vector<trt_yolo::det::Object> objs_kfs_state;
+
+        cv::Mat depth;
+        cv::Mat latest_img_state;
+        float nine_square_depth_value{0.0};
+        std::chrono::steady_clock::time_point now_time;
+
+        {   // 18ms ~ 38ms
+            std::unique_lock<std::mutex> lock(compute_state_);
+            final_state_.wait(lock, [this]{
+                return (has_float_ && has_obj_kfs_) || !rclcpp::ok() || !running_;
+            });
+            if(!rclcpp::ok() || !running_) 
+            {
+                break;
+            }
+            nine_square_depth_value = nine_square_depth_value_;
+            objs_kfs_red_state = objs_kfs_red_state_;
+            objs_kfs_blue_state = objs_kfs_blue_state_;
+            depth = latest_depth_state_;
+            has_obj_kfs_ = false;
+            has_float_ = false; 
+            retain_ = true;//防止在等 has_float_ 时 objs_kfs_ 更新
+            if(retain_) 
+            {
+                if (d455_log_.is_open()) 
+                {
+                    d455_log_ << " retain_ = true" << endl;
+                }
+            }
+            latest_img_state = latest_img_state_;
+            now_time = quads_timestamp_;
+        }
+
+        objs_kfs_state.clear();
+        objs_kfs_state.reserve(objs_kfs_red_state.size() + objs_kfs_blue_state.size());
+        objs_kfs_state.insert(objs_kfs_state.end(), 
+                      objs_kfs_red_state.begin(), 
+                      objs_kfs_red_state.end());
+        objs_kfs_state.insert(objs_kfs_state.end(), 
+                      objs_kfs_blue_state.begin(), 
+                      objs_kfs_blue_state.end());
+        
+                
+        kfs_show_cloud -> clear();
+
+        gstate_ -> sortObjectsOrder_Red(objs_kfs_state);
+
+        std::vector<Unet::Quad2D> quads = getNearestQuads(now_time);
+        if(quads.empty()) continue;
+        for (const auto& quad : quads)
+        {
+            cv::Scalar color = quad.valid ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+            if (quad.pts.empty()) continue;
+            for (const auto& pt : quad.pts)
+            {
+                if(pt.x >= 0 && pt.x < latest_img_state.cols && pt.y >= 0 && pt.y < latest_img_state.rows){
+                    cv::circle(latest_img_state, pt, 3, cv::Scalar(0, 255, 0), -1);
+                }
+            }
+        }
+        // cout << "\n\n" << endl;
+        cv::namedWindow("latest_img_state", cv::WINDOW_NORMAL);
+        cv::imshow("latest_img_state", latest_img_state);
+
+
+        bool grid_occupied[3][3] = {{false}};
+        for (const auto& obj : objs_kfs_state) // 5ms
+        {
+            if(obj.rect.width > 630 || (obj.rect.width / obj.rect.height) > 2.5 || (obj.rect.width / obj.rect.height) < 0.4) 
+            {
+                // cerr <<  "obj.rect.width: " << obj.rect.width << ",宽/高：" << obj.rect.width / obj.rect.height << endl;
+                continue;
+            }
+            Eigen::Vector2d center_px(obj.rect.x + obj.rect.width * 0.5, 
+                                    obj.rect.y + obj.rect.height * 0.5);
+            int matched_grid_id = -1; // 1-9
+            for (int i = 0; i < 9; ++i)
+            {
+                //当前框中心是否在第i个九宫格里 在返回true
+                if (gstate_->isPointInQuad2D(center_px, quads[i])) // < 0.0001ms
+                {
+                    matched_grid_id = i + 1;
+                    // cout << "点(" << center_px.x() << "," << center_px.y() << ") 在" <<  matched_grid_id << "格子里" << endl;
+                    break;
+                }
+            }
+            if (matched_grid_id == -1)
+            {
+                // if(show_test_) cout << "不在格子里" << endl;
+                continue;
+            }
+            int row, col;
+            if(field_ == 0)
+            {
+                row = (matched_grid_id - 1) / 3;
+                col = (matched_grid_id - 1) % 3;
+            }
+            else if(field_ == 1)
+            {
+                row = (matched_grid_id - 1) / 3;
+                col = 2 - (matched_grid_id - 1) % 3;
+            }
+
+            if (grid_occupied[row][col]) continue;
+            
+            float kfs_depth_value = rectangle_depth(obj.rect, depth, oss, row, col);// 1ms
+
+            if(kfs_depth_value < 300 || kfs_depth_value > 3000) 
+            {
+                grid_state_[row][col] = 0;
+                if(d455_log_.is_open()) oss << " [ERROR: " << matched_grid_id << "号kfs深度: " << kfs_depth_value << "] ";
+                continue;
+            }
+
+            if (kfs_depth_value > (nine_square_depth_value + 300))
+            {
+                if(d455_log_.is_open()) oss << "  在【" << matched_grid_id << "】号格的kfs深度: " << std::fixed << std::setprecision(1) << kfs_depth_value <<" 未进入 九宫格【" << nine_square_depth_value << "】" ;
+                grid_state_[row][col] = 0;
+                // cout << "  在【" << matched_grid_id << "】号格的kfs深度: " << std::fixed << std::setprecision(1) << kfs_depth_value <<" 未进入 九宫格【" << nine_square_depth_value << "】" << endl;
+                continue;
+            }
+            if(d455_log_.is_open()) oss << " " << matched_grid_id << " 号格的kfs" << "深度 " << std::fixed << std::setprecision(1) << kfs_depth_value;
+            // cout << " " << matched_grid_id << " 号格的kfs" << "深度 " << std::fixed << std::setprecision(1) << kfs_depth_value << endl;;
+
+            if (obj.label == 0 || obj.label == 1) grid_state_[row][col] = 1;
+            else if (obj.label == 2 || obj.label == 3) grid_state_[row][col] = 2;
+
+            grid_occupied[row][col] = true; // 标记该格子已被占领
+        }
+
+
+        for (size_t i = 0; i < quads.size(); ++i)
+        {
+            bool isCenterOutside = true; // 没有落在任何矩形内，返回 true
+            const auto& quad = quads[i];
+            Eigen::Vector2f center = (Eigen::Vector2f(quad.pts[0].x, quad.pts[0].y) +
+                                    Eigen::Vector2f(quad.pts[1].x, quad.pts[1].y) +
+                                    Eigen::Vector2f(quad.pts[2].x, quad.pts[2].y) +
+                                    Eigen::Vector2f(quad.pts[3].x, quad.pts[3].y)) / 4.0f;
+            if(center.x() < 0.0 || center.x() >= 640.0 || center.y() < 0.0 || center.y() >= 480.0) continue;
+            if (!quad.valid) 
+            {
+                continue;
+            }
+            for (const auto& obj : objs_kfs_state)
+            {
+                // bool isInside = (center.x() >= obj.rect.x * 1/1.5) && 
+                //     (center.x() < (obj.rect.x + obj.rect.width) * 1.5) && 
+                //     (center.y() >= obj.rect.y * 1/1.5) && 
+                //     (center.y() < (obj.rect.y + obj.rect.height) * 1.5);
+
+                bool isInside = ((quad.pts[0].x + quad.pts[1].x)/2 <= obj.rect.x + obj.rect.width/2 ) && 
+                ((quad.pts[2].x + quad.pts[3].x)/2 >= obj.rect.x + obj.rect.width/2 ) && 
+                ((quad.pts[0].y + quad.pts[3].y)/2 <= obj.rect.y + obj.rect.height/2) && 
+                ((quad.pts[1].y + quad.pts[2].y)/2 >= obj.rect.y + obj.rect.height/2);
+                    
+                if (isInside)
+                {
+                    isCenterOutside = false;   // 中心点落在某个矩形内，返回 false
+                    break;
+                }
+            }          
+            if(isCenterOutside)
+            {
+                int row, col;
+                if(field_ == 0)
+                {
+                    row = i / 3;
+                    col = i % 3;
+                }
+                else if(field_ == 1)
+                {
+                    row = i / 3;
+                    col = 2 - i % 3;
+                }
+                grid_state_[row][col] = 0;
+            }
+        }
+
+
+
+        //连续3次状态相同才发新数据
+        // if(std::memcmp(grid_state_,grid_pre_state_,sizeof(int[3][3]))) //相同 返回 0
+        // {
+        //     std::memcpy(grid_pre_state_, grid_state_, sizeof(int[3][3]));
+        //     count = 0;
+        // }
+        // else 
+        // {
+        //     count++;
+        //     if(count >= 3)
+        //     {
+        //         std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
+        //         count = 0;
+        //     }
+        // }
+        // cloud_viewer_.add_cloud(kfs_show_cloud,"src");//kfs_show_cloud空
+        std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
+
+        gstate_ -> publish_state();
+        
+        if (d455_log_.is_open()) 
+        {
+            d455_log_ << oss.str(); 
+        } 
+        auto finish = buffer::Timestamp::now();
+        auto diff = buffer::Timestamp::diff(finish, now);
+        // std::cout << "process_state_Loop 时间间隔: " << diff/1000.0 << " ms" << endl;
+	} 
+    if(show_test_) cout << "process_state_Loop 线程退出" << endl;
+}
+
+
+void D455Node::alignLoop() 
+{
+    align_->center_x = d455_->GetNewCenterX();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+	while (running_.load() && rclcpp::ok())
+ 	{
+        if((align_->center_x = d455_->GetNewCenterX()) == -1)
+        {
+            std::this_thread::sleep_for(1ms);
+            continue;
+        } 
+        // std::cout << align_->center_x << std::endl; 		
+        // std::cout << "进入循环" << std::endl;
+		Dataframe df_;
+        std::vector<trt_yolo::det::Object> objs_gw_gan1;
+        std::vector<trt_yolo::det::Object> objs_gy_gan2;
+        align_->R1_is_putting = false;
+
+		if (!align_buffer_.read(df_)) 
+		{
+			std::this_thread::sleep_for(1ms);
+			continue;
+		}
+		else 
+		{
+            // std::cout << "读到图df_" << std::endl;
+			// auto align_msg = base_interfaces::msg::Align();
+            
+			if(yolo_detector_)
+            {
+                if (df_.src.empty() || df_.depth.empty()) 
+				{
+                    // std::cout << "没图" << std::endl;
+                    continue;
+				} 
+                {
+                    std::unique_lock<std::mutex> lock(gan_mut_);
+                    objs_gw_gan1 = objs_gw_gan1_;
+                    objs_gy_gan2 = objs_gy_gan2_;
+                }
+                if(objs_gw_gan1.empty() && objs_gy_gan2.empty())
+                {
+                    // std::cout << "俩都没有" << std::endl;
+					align_->align_start = false;
+                    align_->publish();
+                    continue;
+                }
+                else
+                {
+                    // std::cout << "进入主要程序" << std::endl;
+                    align_->align_start = true;
+                    align_->R1_is_putting = false;
+                    if(objs_gy_gan2.empty())
+                    {
+                        align_->R1_is_putting = true;
+                        align_->publish();
+                        continue;
+                    }
+					const auto& fixobj = objs_gy_gan2[0];
+					align_->align_rect = fixobj.rect;
+                    if(objs_gw_gan1.empty())
+                    {
+                        align_->should_climb = true;
+                    }
+                    else
+                    {
+                        align_->should_climb = false;
+                    }
+
+					cloud = d455_->PointCloudGenerateRect(align_->align_rect, df_.depth,2,2);
+						
+					if(!cloud->empty())
+					{
+						// cloud = pcl_->removeStatisticalOutliers(cloud);
+						// cloud = pcl_->removeRadiusOutliers(cloud);
+						align_->getDepth(cloud);
+                    }
+				
+                    if(align_->outDepth() >= 400 && align_->outDepth() <=1200)
+					{
+                        align_->use_pca = true;
+						align_->getVector(cloud);
+						align_->calculateWideRodCenter();
+					}
+                    else
+                    {
+                        align_->use_pca = false;
+                    }
+                    align_->publish();
+                }
+            }
+        }
+    }
+    cout << "alignLoop 线程退出" << endl;
+}
+
+void D455Node::pickLoop()
+{
+    pick_->center_x = d455_->GetNewCenterX();
+    pcl::PointCloud<pcl::PointXYZ>::Ptr cloud(new pcl::PointCloud<pcl::PointXYZ>);
+    while (running_.load() && rclcpp::ok())
+    {
+        if((pick_->center_x = d455_->GetNewCenterX()) == -1)
+        {
+            std::this_thread::sleep_for(1ms);
+            continue;
+        }
+        cv::Mat src;
+        cv::Mat depth;
+        Dataframe df_;
+        std::vector<trt_yolo::det::Object> objs_kfs_red_r1;
+        std::vector<trt_yolo::det::Object> objs_kfs_red_r2;
+        std::vector<trt_yolo::det::Object> objs_kfs_blue_r1;
+        std::vector<trt_yolo::det::Object> objs_kfs_blue_r2;
+
+        if(!pick_buffer_.read(df_))
+        {
+            std::this_thread::sleep_for(1ms);
+			continue;
+        }
+        else
+        {
+            if (yolo_detector_)
+            {
+                if (df_.src.empty() || df_.depth.empty()) 
+                {
+                    continue;
+                }
+                {
+                    std::unique_lock<std::mutex> lock(kfs_mut_);
+                    objs_kfs_red_r1 = objs_kfs_red_r1_;
+                    objs_kfs_red_r2 = objs_kfs_red_r2_;
+                    objs_kfs_blue_r1 = objs_kfs_blue_r1_; 
+                    objs_kfs_blue_r2 = objs_kfs_blue_r2_; 
+                }
+                if(objs_kfs_red_r1.empty() && COLOR == 1)
+                {
+                    pick_->pick_start = false;
+                    pick_->publish();
+                    continue;
+                }
+                if(objs_kfs_blue_r1.empty() && COLOR == 0)
+                {
+                    pick_->pick_start = false;
+                    pick_->publish();
+                    continue;
+                }
+                
+            
+                pick_->pick_start = true;
+
+                if(COLOR == 1)
+                {
+                    std::vector<cv::Rect> rects;
+                    for(auto object : objs_kfs_red_r1)
+                    {
+                        rects.push_back(object.rect);
+                    }
+                    pick_->Input(df_.depth, rects, d455_);
+                }
+                else
+                {
+                    std::vector<cv::Rect> rects;
+                    for(auto object : objs_kfs_blue_r1)
+                    {
+                        rects.push_back(object.rect);
+                    }
+                    pick_->Input(df_.depth, rects, d455_);
+                }
+                pick_->publish();
+            
+            }
+        }
+    }
+    cout << "pickLoop 线程退出" << endl;
+}
+
+
+void D455Node::displayLoop()
+{
+    if(display_)
+    {
+        // cv::namedWindow("yolo_detect", cv::WINDOW_NORMAL);
+        cv::namedWindow("src", cv::WINDOW_NORMAL); 
+        // cv::namedWindow("grid", cv::WINDOW_NORMAL); 
+        cv::namedWindow("grid_mask", cv::WINDOW_NORMAL); 
+        cv::namedWindow("merged_mask", cv::WINDOW_NORMAL); 
+        cv::namedWindow("canvas", cv::WINDOW_NORMAL); 
+    }
+
+    static unsigned int save_counter = 0;
+
+    while (running_.load() && rclcpp::ok())
+    {
+        cv::Mat disp, src, grid, merged_mask, canvas,mask;
+
+        merged_mask = trt_seg_->Getmerged_mask();
+        canvas = trt_seg_->Getcanvas();
+        mask = trt_seg_->Getmask();
+
+        // std::cout << "[Display] Canvas size: " << canvas.size() << ", Mask size: " << mask.size() << std::endl;
+  
+        
+        {
+            std::lock_guard<std::mutex> lock(disp_mutex_);
+            if (!disp_.empty()) { disp = disp_; disp_.release(); } 
+            if (!disp_src_.empty()) { src = disp_src_; disp_src_.release(); }
+        }
+
+        Eigen::Matrix3d R_bw;
+        Eigen::Vector3d cam_pos;
+        
+        {
+            std::lock_guard<std::mutex> lock(mut_pos_);
+            cam_pos = cam_pos_;
+            R_bw = R_bw_;
+        }
+
+        // 耗时的 imshow 放在锁外面
+        // if (!disp.empty()) cv::imshow("yolo_detect", disp); 
+        if (!src.empty()) cv::imshow("src", src);
+        // if (!grid.empty()) cv::imshow("grid", grid);
+        if (!mask.empty()) cv::imshow("grid_mask", mask);
+        if (!merged_mask.empty()) cv::imshow("merged_mask", merged_mask);
+        if (!canvas.empty()) cv::imshow("canvas", canvas);
+        
+
+        ++save_counter;  
+        // 生成4位数字后缀，例如 0001
+        std::ostringstream suffix_ss;
+        suffix_ss << std::setw(4) << std::setfill('0') << save_counter;
+        std::string suffix = suffix_ss.str();
+
+        std::string save_dir = "src/cv/canvas_61/";
+        // 确保目录存在（需要 C++17 的 filesystem）
+        std::filesystem::create_directories(save_dir);
+
+        if (!mask.empty()) {
+            std::string path = save_dir + suffix + "mask_" + ".png";
+            if (!cv::imwrite(path, mask))
+                std::cerr << "[ERROR] 保存 mask 失败: " << path << std::endl;
+        }
+        if (!merged_mask.empty()) {
+            std::string path = save_dir + suffix  + "merged_mask_"  + ".png";
+            if (!cv::imwrite(path, merged_mask))
+                std::cerr << "[ERROR] 保存 merged_mask 失败: " << path << std::endl;
+        }
+        if (!canvas.empty()) {
+            std::string path = save_dir + suffix  + "canvas_" + ".png";
+            if (!cv::imwrite(path, canvas))
+                std::cerr << "[ERROR] 保存 canvas 失败: " << path << std::endl;
+        }
+        std::string pose_path = save_dir + suffix + "pose_" + ".txt";
+        std::ofstream pose_file(pose_path);
+        if (pose_file.is_open()) {
+            pose_file << "cam_pos: " << cam_pos.x() << " " << cam_pos.y() << " " << cam_pos.z() << "\n";
+            pose_file << "R_bw:\n";
+            for (int i = 0; i < 3; ++i) {
+                for (int j = 0; j < 3; ++j) {
+                    pose_file << R_bw(i, j) << (j == 2 ? "\n" : " ");
+                }
+            }
+            pose_file.close();
+        } else {
+            std::cerr << "[ERROR] 无法打开位姿文件: " << pose_path << std::endl;
+        }
+
+        cv::waitKey(1);
+        std::this_thread::sleep_for(std::chrono::milliseconds(30));
+    }
+    cv::destroyAllWindows();
+    cout << "displayLoop 线程退出" << endl;
+}

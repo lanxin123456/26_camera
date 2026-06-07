@@ -1,0 +1,29 @@
+%YAML:1.0
+---
+
+# 0 红场  1 蓝场
+Field: 0 
+ShowParams: true
+Showtest: false
+
+# D455Node parameters
+D455Node:
+  Display: false
+  DispersionThreshold: 800
+  Pcl_params:
+    white_gray_min: 100
+    white_gray_max: 255
+    white_hsv_min: [0, 0, 110, 0]
+    white_hsv_max: [180, 40, 255, 0]
+  ActD_params:
+    bag_path: "/home/lx/bag_63/d455_1780466153.bag"
+
+# Deal parameters
+Deal:
+  Display: true
+  Rect: [314, 214, 39, 11]
+  RectFixed: [298, 230, 70, 65]
+  IntervalY: 20
+  IouThresh: 0.4
+  ImagePath: "/home/lx/frame/yolo_52_3/1777710386_255516.jpg"
+  VideoPath: "camera_back_2026-05-01_17-06-19.avi"

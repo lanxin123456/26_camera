@@ -1,0 +1,55 @@
+%YAML:1.0
+---
+
+# 1 崇武探幽
+# 2 九宫藏宝
+# 3 自定义
+MODE: 2
+R1: 3
+R2: 6
+F: 3
+
+
+LAG_FRAMES: 10
+Brightness: 130
+MinArea: 32500
+TargetWidth: 2400
+TargetHeight: 1200
+AvgBrightness: 180
+DIST_X: 200
+DIST_Y: 100
+GridCollectionFrames: 5
+AreaMinThreshold: 25000
+ContinueWrongFrames: 90
+
+
+BLUE:
+  HU: 105
+  HL: 85
+  DBR: 90
+
+GREEN:
+  HU: 80
+  HL: 50
+  GL: 110
+  DGR: 70
+  DGB: 25
+
+RED:
+  HU: 
+    U: 179
+    L: 171
+  HL: 
+    U: 25
+    L: 0
+  RL: 230
+  DRB: 65
+  DRG: 25
+
+DIRECT:
+  RGU: 130
+  BU: 170
+  RGL: 70
+  BL: 100
+  VU: 190
+  VL: 90
