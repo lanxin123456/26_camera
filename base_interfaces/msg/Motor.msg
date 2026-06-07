@@ -1,0 +1,10 @@
+float32 motor_pos
+float32 motor_vel
+float32 motor_pos_kp
+float32 motor_pos_kd
+float32 motor_vel_kp
+float32 motor_vel_ki
+float32 motor_cur
+float32 motor_ex_cur
+uint8 controlmode
+float32 motor_vel_limit

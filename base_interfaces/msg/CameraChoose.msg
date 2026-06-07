@@ -1,0 +1,2 @@
+int32 camera
+builtin_interfaces/Time stamp

@@ -1,0 +1,30 @@
+# Goal: 目标位置
+geometry_msgs/Pose target_pose
+geometry_msgs/Twist target_vel  # 当前速度
+Motor tarleg1
+Motor tarleg2
+Motor tarleg3
+Motor tarleg4
+Motor tarpitch
+Motor tartelescoping
+Motor tardamiao
+Motor tarwheel1
+Motor tarwheel2
+Motor tarwheel3
+Motor tarwheel4
+Esc taresc1 
+char vavle_num
+Flag tarflag
+geometry_msgs/Pose cur_pose  # 当前位置
+---
+# Result: 执行结果
+bool success
+string message
+geometry_msgs/Pose final_pose  # 最终到达的位置
+ActionPlanState final_state  # 最终快照（与 Feedback 字段对应）
+
+---
+# Feedback: 实时反馈
+int32 mcucnt
+char ps_num1
+char ps_num2
