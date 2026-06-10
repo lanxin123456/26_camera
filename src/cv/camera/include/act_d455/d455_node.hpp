@@ -15,6 +15,7 @@
 #include <act_d455/act_d455.hpp>
 #include <act_d455/grid_state.hpp>
 #include <act_d455/pick.hpp>
+#include <act_d455/kfs.hpp>
 #include "act_d455/save_video.hpp"
 #include "camera/params.hpp"
 
@@ -30,6 +31,7 @@
 #include "base_interfaces/msg/align.hpp"
 #include "base_interfaces/msg/grid_state.hpp"
 #include "base_interfaces/msg/grid_start.hpp"
+#include "base_interfaces/msg/camera_kfs.hpp"
 
 
 #include <atomic>
@@ -201,7 +203,7 @@ private:
         return mid_distance;
     }
 
-    rclcpp::Subscription<base_interfaces::msg::GridStart>::SharedPtr if_start_unet_;
+    rclcpp::Subscription<base_interfaces::msg::GridStart>::SharedPtr sub_start_test_;
     std::mutex start_mutex_;
 
     Eigen::Matrix3d eulerZYX(float yaw_deg, float pitch_deg, float roll_deg)
@@ -217,8 +219,9 @@ private:
         return (Rz * Ry * Rx).toRotationMatrix();
     }
 
-    int start_unet_{1};
+    int start_test_{2};
 
+    void publishdist(float dist);
 
     //-----------------------------
     std::vector<Unet::Quad2D> quads_;
@@ -269,7 +272,11 @@ private:
         //int kfs_mode;
         //int gan_mode;
     };
+    std::string kfs_path_; 
+
+
     void captureLoop();
+    void process_part2_Loop();
     void process_unet_Loop();
     void process_yolo_Loop();
     void process_wall_Loop();
@@ -286,6 +293,7 @@ private:
     std::shared_ptr<Grid_State> gstate_;
     std::shared_ptr<Align> align_;
     std::shared_ptr<Pick> pick_;
+    std::shared_ptr<KFS> kfs_;
     
     DealImg dealImg_;
 
@@ -300,7 +308,9 @@ private:
 
     cv::Mat src_;
     cv::Mat src_unet_;
+    cv::Mat src_part2_;
     cv::Mat depth_;
+    cv::Mat depth_part2_;
     cv::Mat disp_;
     cv::Mat latest_depth_state_;
     cv::Mat white_mask_;
@@ -318,6 +328,7 @@ private:
     std::condition_variable get_wall_or_grid_cloud_;
     std::condition_variable get_frame_;
     std::condition_variable get_frame_unet_;
+    std::condition_variable get_frame_part2_;
 
     std::condition_variable get_wall_;
     std::condition_variable get_kfs_;
@@ -325,6 +336,7 @@ private:
 
     std::mutex frame_mutex;
     std::mutex frame_unet_mutex;
+    std::mutex frame_part2_mutex;
 
     std::mutex compute_wall_or_grid_;
     std::mutex compute_state_;
@@ -339,6 +351,7 @@ private:
     
     bool has_frame_{false};
     bool has_frame_unet_{false};
+    bool has_frame_part2_{false};
 
     bool has_obj_kfs_{false};
     bool has_float_{false};
@@ -353,6 +366,7 @@ private:
 
     
     std::thread capture_thread_;
+    std::thread process_part2_thread_;
     std::thread process_unet_grid_thread_;
 
     std::thread process_yolo_kfs_thread_;
@@ -375,6 +389,9 @@ private:
 
     trt_yolo::YOLOv8Config config_;
     trt_yolo::YOLOv8 *yolo_detector_;
+
+    trt_yolo::YOLOv8Config config_part2_;
+    trt_yolo::YOLOv8 *trt_yolo_part2_;
     
     pPointCloud kfs_show_cloud;
     pPointCloud gan_show_cloud;
@@ -389,6 +406,9 @@ private:
     rclcpp::TimerBase::SharedPtr timer_1;
     rclcpp::TimerBase::SharedPtr timer_2;
     rclcpp::Publisher<base_interfaces::msg::Align>::SharedPtr publisher_1;
+
+    rclcpp::Publisher<base_interfaces::msg::CameraKfs>::SharedPtr pub_kfs_;
+
     //rclcpp::Subscription<base_interfaces::msg::AlignStart>::SharedPtr d455_sub_;
     rclcpp::Subscription<nav_msgs::msg::Odometry>::SharedPtr odom_sub_;
     

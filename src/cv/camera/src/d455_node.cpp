@@ -12,6 +12,7 @@ D455Node::D455Node(const std::string& config_path, const rclcpp::NodeOptions& op
 config_(7, {"red_r1", "red_r2", "blue_r1", "blue_r2", "gw_gan1", "gy_gan2", "wall"}, 
         {{0, 0, 255}, {0, 0, 200}, {255, 0, 0}, {200, 0, 0}, {0, 255, 255}, {0, 200, 200}, {128, 128, 128}}, 
         cv::Size(640, 640), 100, 0.6f, 0.65f),
+config_part2_(1, {"kfs"}, {{0,255,0}}, cv::Size(640, 640), 100, 0.6f, 0.65f),
 nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 {
     loadYamlConfig(config_path);
@@ -69,7 +70,9 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
     // ("",rclcpp::SensorDataQoS(),std::bind(&D455Node::d455_callback, this, std::placeholders::_1))
     
     yolo_detector_  = new trt_yolo::YOLOv8("src/cv/best_59.engine",config_);
+    trt_yolo_part2_ = new trt_yolo::YOLOv8("/home/lx/runs/detect/train28/weights/kfs_69.engine",config_part2_);
     yolo_detector_->make_pipe(true);
+    trt_yolo_part2_->make_pipe(true);
 
 	kfs_show_cloud = std::make_shared<PointCloud>();
     gan_show_cloud = std::make_shared<PointCloud>();
@@ -81,12 +84,12 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 
 	align_ = std::make_shared<Align>();
     pick_ = std::make_shared<Pick>();
+    kfs_ = std::make_shared<KFS>();
     trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_66/best_66.engine");
 
 
-    if_start_unet_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
+    sub_start_test_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
         std::bind(&D455Node::task_callback, this, std::placeholders::_1));
-
 
 
 	std::string base = "zhutianxiang/avt_d455";
@@ -105,6 +108,9 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 
 	float distance = 0.0f;
 	float angle_deg = 0.0f;
+
+    pub_kfs_ = this->create_publisher<base_interfaces::msg::CameraKfs>("/kfs_distance", 10);
+
 	publisher_1 = this->create_publisher<base_interfaces::msg::Align>("d455/align", 10);
     // RCLCPP_INFO(this->get_logger(), "D455自定义消息发布者已初始化");
     tf_buffer_ = std::make_shared<tf2_ros::Buffer>(this->get_clock());
@@ -114,12 +120,22 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
     cout << "Create D455Node" << endl;
 }
 
+void D455Node::publishdist(float dist)
+{
+    base_interfaces::msg::CameraKfs msg;
+    if(abs(dist) <= 200)
+    {
+        msg.kfs_dist = dist;
+        pub_kfs_->publish(msg);
+    }
+}
+
 void D455Node::task_callback(const base_interfaces::msg::GridStart::SharedPtr msg)
 {
     if(msg->start != -1) 
-    {
+    { 
         std::unique_lock<std::mutex> lock(start_mutex_);
-        start_unet_ = msg->start;
+        start_test_ = msg->start;
     } 
 }
 
@@ -136,6 +152,7 @@ void D455Node::loadYamlConfig(const std::string& path)
         // --- 读取参数 ---
         fs["Field"] >> field_;
         fs["Field"] >> grid_params_.field;
+        fs["Kfs_path"] >> kfs_path_;
         
         fs["ShowParams"] >> show_params_;
         fs["Showtest"] >> show_test_;
@@ -189,15 +206,16 @@ void D455Node::start()
     retain_.store(true);
     //成员函数指针必须绑定对象
 	capture_thread_ = std::thread(&D455Node::captureLoop, this);
-    process_unet_grid_thread_ = std::thread(&D455Node::process_unet_Loop, this);
-	process_yolo_kfs_thread_ = std::thread(&D455Node::process_yolo_Loop, this);
-	process_yolo_wall_thread_ = std::thread(&D455Node::process_wall_Loop, this);
+    process_part2_thread_ = std::thread(&D455Node::process_part2_Loop, this);
+    // process_unet_grid_thread_ = std::thread(&D455Node::process_unet_Loop, this);
+	// process_yolo_kfs_thread_ = std::thread(&D455Node::process_yolo_Loop, this);
+	// process_yolo_wall_thread_ = std::thread(&D455Node::process_wall_Loop, this);
 
-    process_state_thread_ = std::thread(&D455Node::process_state_Loop, this);
+    // process_state_thread_ = std::thread(&D455Node::process_state_Loop, this);
     display_thread_ = std::thread(&D455Node::displayLoop, this);
  
-	align_thread_ = std::thread(&D455Node::alignLoop,this); 
-    pick_thread_ = std::thread(&D455Node::pickLoop,this); 
+	// align_thread_ = std::thread(&D455Node::alignLoop,this); 
+    // pick_thread_ = std::thread(&D455Node::pickLoop,this); 
 
     // 2. 给线程命名 (千万注意：名字不能超过15个字符！)
     // pthread_setname_np(capture_thread_.native_handle(), "capture");
@@ -265,6 +283,7 @@ void D455Node::stop()
     final_state_.notify_all();
 
     if (capture_thread_.joinable()) capture_thread_.join();
+    if (process_part2_thread_.joinable()) process_part2_thread_.join();
     if (process_unet_grid_thread_.joinable()) process_unet_grid_thread_.join();
     if (process_yolo_kfs_thread_.joinable()) process_yolo_kfs_thread_.join(); 
     if (process_yolo_wall_thread_.joinable()) process_yolo_wall_thread_.join(); 
@@ -491,20 +510,30 @@ void D455Node::captureLoop()
             if (!frame.empty()) video_writer.write(frame);
             
             // video_writer.write(dataframe_pick_.src);
+            if(start_test_ == 2) 
+            {
+                std::unique_lock<std::mutex> lock(frame_mutex);
+                depth_part2_ = d455_ ->GetDepthImage().clone();
+                src_part2_ = d455_->GetSrcImage().clone();
+                // src_part2_ = cv::imread("/home/lx/frame/test.jpg");
+                has_frame_part2_ = true;
+            } 
+            get_frame_part2_.notify_all();
+
  
             {
                 std::unique_lock<std::mutex> lock(frame_mutex);
                 depth_ = d455_ ->GetDepthImage().clone();
-                // src_ = d455_->GetSrcImage().clone();
-                src_ = cv::imread("/home/lx/frame/test.jpg");
+                src_ = d455_->GetSrcImage().clone();
+                // src_ = cv::imread("/home/lx/frame/test.jpg");
                 has_frame_ = true;
             } 
             get_frame_.notify_all();
 
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
-                // src_unet_ = d455_->GetSrcImage().clone();
-                src_unet_ = cv::imread("/home/lx/frame/test.jpg");
+                src_unet_ = d455_->GetSrcImage().clone();
+                // src_unet_ = cv::imread("/home/lx/frame/test.jpg");
                 has_frame_unet_ = true;
             }
             get_frame_unet_.notify_all();
@@ -528,6 +557,185 @@ void D455Node::captureLoop()
 		}
 	}
     cout << -1 << endl;
+}
+
+void D455Node::process_part2_Loop()
+{
+    while (running_.load() && rclcpp::ok())
+    {
+        auto now_part2 = buffer::Timestamp::now();
+
+        cv::Mat img, depth;
+        {
+            std::unique_lock<std::mutex> lock(frame_mutex);
+            get_frame_part2_.wait(lock,[&]{
+                return (has_frame_part2_ || !rclcpp::ok() || !running_);
+            });
+            if(!rclcpp::ok() || !running_) break;
+            img = src_part2_;
+            depth = depth_part2_;
+            has_frame_part2_ = false;
+        }
+
+        img = cv::imread(kfs_path_);
+
+        if(img.empty())
+        {
+            cout << "传入图像为空" << endl;
+            continue;
+        }
+        if(trt_yolo_part2_ == nullptr)
+        {
+            cout << "trt_yolo_part2_指针为空" << endl;
+        }
+        // cv::imshow("img", img);
+        // cv::waitKey(1);
+        auto finish = buffer::Timestamp::now();
+        auto diff = buffer::Timestamp::diff(finish, now_part2);
+        // std::cout << "part2_更新图像时间间隔: " << diff/1000.0 << " ms" << endl;
+
+        if(start_test_ == 2)  
+        {
+            auto now1 = buffer::Timestamp::now();
+
+            trt_yolo_part2_->detect(img);
+
+            // cout << "trt_yolo_part2_->objs.size(): " << trt_yolo_part2_->objs.size() << endl;
+            if(trt_yolo_part2_->objs.size() == 0) 
+            {
+                // cout << "没有kfs" << endl;
+                continue;
+            }
+
+            cv::Rect best_rect;
+            float max_area = 0.0f;
+            for (const auto& obj : trt_yolo_part2_->objs)
+            {
+                if (obj.label == 0)
+                {
+                    float area = obj.rect.width * obj.rect.height;
+                    if (area > max_area)
+                    {
+                        max_area = area;
+                        best_rect = cv::Rect(obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+                    }
+                }
+            }
+
+            if (max_area == 0.0f) continue;
+
+            cv::Mat gray = kfs_->Kfs(img, best_rect, depth);
+            int whitePixelCount = cv::countNonZero(gray);
+            if(whitePixelCount <= 100)
+            {
+                std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                
+                continue;            
+            }
+
+            kfs_->boudary(gray, best_rect);
+
+            cv::Mat vis_img = cv::Mat::zeros(img.size(), CV_8UC3);
+            // cv::Mat white_mask(img.size(), CV_8UC3, cv::Scalar(255, 255, 255));
+            // white_mask.copyTo(vis_img, gray);
+            cv::rectangle(vis_img, best_rect, cv::Scalar(0, 0, 255), 2);
+            const auto& pts_left = kfs_->getPointsLeft();
+            const auto& pts_right = kfs_->getPointsRight();
+            Scalar green_color(0, 255, 0);
+            Scalar red_color(0, 0, 255);
+
+            // cout << "pts_left.size(): " << pts_left.size() << " pts_right.size(): " << pts_right.size() << endl;
+
+            float dist{0.0};
+            double mean_left{0.0};
+            double mean_right{0.0};
+            if (!pts_left.empty()) 
+            {
+ 
+                double sum_left = 0;
+                for (const auto& pt : pts_left) sum_left += pt.x;
+                mean_left = sum_left / pts_left.size();
+            }
+            if (!pts_right.empty()) 
+            {
+                double sum_right = 0;
+                for (const auto& pt : pts_right) sum_right += pt.x;
+                mean_right = sum_right / pts_right.size();
+            }
+            // cout << "mean_left: " << mean_left << " mean_right: " << mean_right << endl;
+
+            if(mean_left != 0 && mean_right != 0) 
+            {
+                dist = 350 / (mean_right - mean_left) * ((mean_right + mean_left) / 2 - 317.011) - 11.0;
+                if(dist >= 200) dist = 999;
+                if(dist <= -200) dist = -999;
+            }
+            else if (mean_left == 0) dist = 999;
+            else if (mean_right == 0) dist = -999;
+
+            if(kfs_->kfs_log_.is_open()) kfs_->kfs_log_  << dist << endl;
+
+            publishdist(dist);
+
+            // ========== 保存图像并标注 dist 值 ==========
+// // ========== 保存图像并标注 dist 值 ==========
+// if (!img.empty())  // 仅当有效时才保存
+// {
+//     // 复制原图，避免修改显示用的图像
+//     cv::Mat img_with_text = img.clone();
+//     cv::Mat gray_text = gray.clone();
+
+//     for (const auto& pt : pts_left) cv::circle(img_with_text, pt, 1, green_color, -1);
+//     for (const auto& pt : pts_right) cv::circle(img_with_text, pt, 1, green_color, -1);
+
+//     cv::rectangle(img_with_text, best_rect, cv::Scalar(255, 255, 255), 1);
+
+//     // 格式化 dist 字符串，保留适当精度
+//     std::string dist_text = "dist: " + std::to_string(dist);
+//     // 左上角第一行：dist 值 (y=30)
+//     cv::putText(img_with_text, dist_text, cv::Point(10, 30),
+//                 cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+
+//     // 新增：显示左右点数 (y=60)
+//     std::string count_text = "Left count: " + std::to_string(pts_left.size()) +
+//                              ", Right count: " + std::to_string(pts_right.size());
+//     cv::putText(img_with_text, count_text, cv::Point(10, 60),
+//                 cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+
+//     // 新增：显示左右均值 (y=90)
+//     std::string mean_text = "Mean left: " + std::to_string(mean_left) +
+//                             ", Mean right: " + std::to_string(mean_right);
+//     cv::putText(img_with_text, mean_text, cv::Point(10, 90),
+//                 cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+
+//     // 保存路径（确保目录存在）
+//     std::string save_dir = "/home/lx/code/aaa/2.6_oneYolo_CHANLLENGE_960_720_git/kfs/";
+//     // 使用时间戳或计数器生成唯一文件名
+//     static int save_counter = 0;
+//     std::string filename = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
+//     std::string grayname = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
+//     cv::imwrite(filename, img_with_text);
+//     // cv::imwrite(grayname, gray_text);
+//     // 可选：将保存的文件名写入日志
+//     // if(kfs_->kfs_log_.is_open()) kfs_->kfs_log_ << "Saved: " << filename << std::endl;
+// }
+// // ==========================================
+
+//             for (const auto& pt : pts_left) cv::circle(vis_img, pt, 1, green_color, -1);
+//             for (const auto& pt : pts_right) cv::circle(vis_img, pt, 1, red_color, -1);
+            cv::Mat res = trt_yolo_part2_->res;
+            cv::namedWindow("gray", cv::WINDOW_NORMAL);
+            cv::imshow("gray", gray);
+            cv::namedWindow("res", cv::WINDOW_NORMAL);
+            cv::imshow("res", res);
+            cv::imshow("KFS_Visualization", vis_img);
+            cv::waitKey(1);
+
+            auto finish1 = buffer::Timestamp::now();
+            auto diff1 = buffer::Timestamp::diff(finish1, now1);
+            // std::cout << "part2_处理图像时间间隔: " << diff1/1000.0 << " ms" << endl;
+        }
+    }
 }
 
 void D455Node::process_unet_Loop()
@@ -560,7 +768,7 @@ void D455Node::process_unet_Loop()
             R_bw = R_bw_;
         }
 
-        if(start_unet_ == 1)  {
+        if(start_test_ == 1)  {
             trt_seg_->detect(img);
 
             std::vector<Unet::Quad2D> quads = trt_seg_->getgridquads(img, R_bw, cam_pos); 
@@ -632,7 +840,7 @@ void D455Node::process_yolo_Loop()
 
         // auto now_unet = buffer::Timestamp::now();
 
-        // if(start_unet_ == 1)  trt_seg_->detect(img);
+        // if(start_test_ == 1)  trt_seg_->detect(img);
 
         // auto finish_unet = buffer::Timestamp::now();
         // auto diff_unet = buffer::Timestamp::diff(finish_unet, now_unet);
@@ -709,7 +917,7 @@ void D455Node::process_yolo_Loop()
 
         {
             std::unique_lock<std::mutex> lock(compute_state_);
-            if(retain_ && start_unet_ == 1 )
+            if(retain_ && start_test_ == 1 )
             {
                 objs_kfs_red_state_.clear();
                 objs_kfs_red_state_.reserve(objs_kfs_red_r1.size() + objs_kfs_red_r2.size());

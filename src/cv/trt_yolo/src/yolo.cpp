@@ -205,6 +205,7 @@ void YOLOv8::setColors(std::vector<std::vector<unsigned int>> colors)
 void YOLOv8::detect(const cv::Mat& image)
 {
     // 单帧检测主流程：preprocess -> infer -> postprocess -> draw
+    // std::cout << "进入YOLO检测" << std::endl;
     this->objs.clear();
     this->copy_from_Mat(image, this->size);
     this->infer();
@@ -407,6 +408,7 @@ void YOLOv8::postprocess(std::vector<det::Object>& objs, float score_thres, floa
         float  score      = *max_s_ptr;
         
         if (score < score_thres) {
+            // std::cout << "score: " << std::fixed << std::setprecision(3) << score << " < 阈值：" << score_thres << std::endl;
             continue;
         }
         // std::cout << "score: " << std::fixed << std::setprecision(3) << score << std::endl;

@@ -10,7 +10,7 @@
 // === 直接使用你原来的类（不改！）===
 #include "act_d455/d455_node.hpp"
 #include "camera_backward/weapon.hpp"    
-#include "camera_forward/kfs.hpp"               
+// #include "camera_forward/kfs.hpp"               
 #include <base_interfaces/msg/camera_choose.hpp>
 
 // 注意：这里必须继承 rclcpp::Node 才能使用订阅和定时器

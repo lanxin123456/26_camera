@@ -5,6 +5,7 @@
 Field: 0 
 ShowParams: true
 Showtest: false
+Kfs_path: "/home/lx/frame/yolo_part2_rotated/1780928132_191145.jpg"
 
 # D455Node parameters
 D455Node:
@@ -16,7 +17,7 @@ D455Node:
     white_hsv_min: [0, 0, 110, 0]
     white_hsv_max: [180, 40, 255, 0]
   ActD_params:
-    bag_path: "/home/lx/bag_63/d455_1780466153.bag"
+    bag_path: "/home/lx/bag_kfs/d455_1780974258.bag"
 
 # Deal parameters
 Deal:
