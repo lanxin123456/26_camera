@@ -91,11 +91,16 @@ void MultiCameraNode::check_and_switch_camera()
             }
             break;
         case 3:
-            // if(kfs_ != nullptr && !run_kfs_) 
-            // {
-            //     kfs_->start();
-            //     run_kfs_ = true;
-            // }
+            if(d455_ != nullptr && !run_d455_) 
+            {
+                d455_->start();
+                run_d455_ = true;
+                if(deal_ != nullptr && !run_deal_) 
+                {
+                    deal_->start();
+                    run_deal_ = true;
+                }
+            }
             break;
         case 0:
             cout << "未开启相机" << endl;
