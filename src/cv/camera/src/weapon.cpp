@@ -420,7 +420,7 @@ void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, 
             }
             break;  
         default:
-            std::cout << "unknown\n";
+            // std::cout << "unknown\n";
         break;             
     }
     current_task_ = task_local;

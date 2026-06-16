@@ -54,9 +54,9 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
     -0.0148521, -0.0296111,   0.999451;
 
     cam_pos_ <<
-    2051.47,
-    10538.9,
-    909.578;
+    2084.47,
+    10232.9,
+    948.578;
 
     // rclcpp::QoS qos(50);
     // qos.best_effort();
@@ -207,12 +207,14 @@ void D455Node::start()
     //成员函数指针必须绑定对象
 	capture_thread_ = std::thread(&D455Node::captureLoop, this);
     process_part2_thread_ = std::thread(&D455Node::process_part2_Loop, this);
-    // process_unet_grid_thread_ = std::thread(&D455Node::process_unet_Loop, this);
-	// process_yolo_kfs_thread_ = std::thread(&D455Node::process_yolo_Loop, this);
-	// process_yolo_wall_thread_ = std::thread(&D455Node::process_wall_Loop, this);
+    process_unet_grid_thread_ = std::thread(&D455Node::process_unet_Loop, this);
+	process_yolo_kfs_thread_ = std::thread(&D455Node::process_yolo_Loop, this);
+	process_yolo_wall_thread_ = std::thread(&D455Node::process_wall_Loop, this);
 
-    // process_state_thread_ = std::thread(&D455Node::process_state_Loop, this);
+    process_state_thread_ = std::thread(&D455Node::process_state_Loop, this);
     display_thread_ = std::thread(&D455Node::displayLoop, this);
+
+    if(d455_log_.is_open()) d455_log_ << " Start D455Node 完毕"  << endl;
  
 	// align_thread_ = std::thread(&D455Node::alignLoop,this); 
     // pick_thread_ = std::thread(&D455Node::pickLoop,this); 
@@ -271,6 +273,13 @@ void D455Node::stop()
     cout << "Stop D455" << endl;
     if(d455_log_.is_open()) d455_log_ << " Stop D455 "  << endl;
     running_ = false;
+    has_frame_part2_ = true;
+    has_frame_ = true;
+    detect_obj_wall_ = true;
+    has_float_ = true; 
+    has_obj_kfs_ = true;
+    has_frame_unet_ = true;
+    is_identify_KFS_ = false;
 
     try {
         d455_->pipe.stop();
@@ -279,21 +288,32 @@ void D455Node::stop()
 
     get_frame_.notify_all();
     get_wall_.notify_all();
+    get_frame_unet_.notify_all();
+    get_frame_part2_.notify_all();
     get_wall_or_grid_cloud_.notify_all();
     final_state_.notify_all();
 
     if (capture_thread_.joinable()) capture_thread_.join();
+
     if (process_part2_thread_.joinable()) process_part2_thread_.join();
+
     if (process_unet_grid_thread_.joinable()) process_unet_grid_thread_.join();
+
     if (process_yolo_kfs_thread_.joinable()) process_yolo_kfs_thread_.join(); 
+
     if (process_yolo_wall_thread_.joinable()) process_yolo_wall_thread_.join(); 
+
     if (process_state_thread_.joinable()) process_state_thread_.join(); 
+
     if (display_thread_.joinable()) display_thread_.join();
+
     if (pick_thread_.joinable()) pick_thread_.join();
+
     if (align_thread_.joinable()) align_thread_.join();
 
+
     cv::destroyAllWindows();
-    cout << "d455 stop 结束" << endl;
+    if(d455_log_.is_open()) d455_log_ << "d455 stop 结束" << endl;
 }
 
 // 新增：里程计回调
@@ -493,19 +513,20 @@ void D455Node::captureLoop()
             //     is_identify_KFS_ = false;
             // }
 
-            // if(is_identify_KFS_)
-            // {
-            //     if(dealImg_.Deal(frame))
-            //     {
-            //         cv::waitKey(1);
-            //     }
-            //     else
-            //     {
-            //         is_identify_KFS_ = false;
-            //         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            //         dealImg_.cleanup();
-            //     }
-            // }
+            if(is_identify_KFS_)
+            {
+                if(d455_log_.is_open()) d455_log_ << "看手机" << endl;
+                if(dealImg_.Deal(frame)) 
+                {
+                    cv::waitKey(1);
+                }
+                else
+                {
+                    is_identify_KFS_ = false;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    dealImg_.cleanup();
+                }
+            }
             
             if (!frame.empty()) video_writer.write(frame);
             
@@ -554,6 +575,7 @@ void D455Node::captureLoop()
 			auto finish = buffer::Timestamp::now();
 			auto diff = buffer::Timestamp::diff(finish, now);
 			// std::cout << "采集循环时间间隔: " << diff/1000.0 << " ms" << endl;
+            // if(d455_log_.is_open()) d455_log_ << "采集循环时间间隔: " << diff/1000.0  << endl;
 		}
 	}
     cout << -1 << endl;
@@ -577,7 +599,7 @@ void D455Node::process_part2_Loop()
             has_frame_part2_ = false;
         }
 
-        img = cv::imread(kfs_path_);
+        // img = cv::imread(kfs_path_);
 
         if(img.empty())
         {
@@ -596,7 +618,6 @@ void D455Node::process_part2_Loop()
 
         if(start_test_ == 2)  
         {
-            auto now1 = buffer::Timestamp::now();
 
             trt_yolo_part2_->detect(img);
 
@@ -617,12 +638,14 @@ void D455Node::process_part2_Loop()
                     if (area > max_area)
                     {
                         max_area = area;
-                        best_rect = cv::Rect(obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
+                        // best_rect = cv::Rect(obj.rect.x, obj.rect.y, obj.rect.width, obj.rect.height);
                     }
                 }
             }
 
             if (max_area == 0.0f) continue;
+
+            best_rect = trt_yolo_part2_->objs[0].rect;
 
             cv::Mat gray = kfs_->Kfs(img, best_rect, depth);
             int whitePixelCount = cv::countNonZero(gray);
@@ -678,62 +701,64 @@ void D455Node::process_part2_Loop()
             publishdist(dist);
 
             // ========== 保存图像并标注 dist 值 ==========
-// // ========== 保存图像并标注 dist 值 ==========
-// if (!img.empty())  // 仅当有效时才保存
-// {
-//     // 复制原图，避免修改显示用的图像
-//     cv::Mat img_with_text = img.clone();
-//     cv::Mat gray_text = gray.clone();
+            auto now1 = buffer::Timestamp::now();
 
-//     for (const auto& pt : pts_left) cv::circle(img_with_text, pt, 1, green_color, -1);
-//     for (const auto& pt : pts_right) cv::circle(img_with_text, pt, 1, green_color, -1);
+// ========== 保存图像并标注 dist 值 ==========
+if (!img.empty())  // 仅当有效时才保存
+{
+    // 复制原图，避免修改显示用的图像
+    cv::Mat img_with_text = img.clone();
+    cv::Mat gray_text = gray.clone();
 
-//     cv::rectangle(img_with_text, best_rect, cv::Scalar(255, 255, 255), 1);
+    for (const auto& pt : pts_left) cv::circle(img_with_text, pt, 1, green_color, -1);
+    for (const auto& pt : pts_right) cv::circle(img_with_text, pt, 1, green_color, -1);
 
-//     // 格式化 dist 字符串，保留适当精度
-//     std::string dist_text = "dist: " + std::to_string(dist);
-//     // 左上角第一行：dist 值 (y=30)
-//     cv::putText(img_with_text, dist_text, cv::Point(10, 30),
-//                 cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
+    cv::rectangle(img_with_text, best_rect, cv::Scalar(255, 255, 255), 1);
 
-//     // 新增：显示左右点数 (y=60)
-//     std::string count_text = "Left count: " + std::to_string(pts_left.size()) +
-//                              ", Right count: " + std::to_string(pts_right.size());
-//     cv::putText(img_with_text, count_text, cv::Point(10, 60),
-//                 cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+    // 格式化 dist 字符串，保留适当精度
+    std::string dist_text = "dist: " + std::to_string(dist);
+    // 左上角第一行：dist 值 (y=30)
+    cv::putText(img_with_text, dist_text, cv::Point(10, 30),
+                cv::FONT_HERSHEY_SIMPLEX, 1.0, cv::Scalar(0, 255, 0), 2);
 
-//     // 新增：显示左右均值 (y=90)
-//     std::string mean_text = "Mean left: " + std::to_string(mean_left) +
-//                             ", Mean right: " + std::to_string(mean_right);
-//     cv::putText(img_with_text, mean_text, cv::Point(10, 90),
-//                 cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+    // 新增：显示左右点数 (y=60)
+    std::string count_text = "Left count: " + std::to_string(pts_left.size()) +
+                             ", Right count: " + std::to_string(pts_right.size());
+    cv::putText(img_with_text, count_text, cv::Point(10, 60),
+                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
 
-//     // 保存路径（确保目录存在）
-//     std::string save_dir = "/home/lx/code/aaa/2.6_oneYolo_CHANLLENGE_960_720_git/kfs/";
-//     // 使用时间戳或计数器生成唯一文件名
-//     static int save_counter = 0;
-//     std::string filename = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
-//     std::string grayname = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
-//     cv::imwrite(filename, img_with_text);
-//     // cv::imwrite(grayname, gray_text);
-//     // 可选：将保存的文件名写入日志
-//     // if(kfs_->kfs_log_.is_open()) kfs_->kfs_log_ << "Saved: " << filename << std::endl;
-// }
-// // ==========================================
+    // 新增：显示左右均值 (y=90)
+    std::string mean_text = "Mean left: " + std::to_string(mean_left) +
+                            ", Mean right: " + std::to_string(mean_right);
+    cv::putText(img_with_text, mean_text, cv::Point(10, 90),
+                cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 0), 2);
+
+    // 保存路径（确保目录存在）
+    std::string save_dir = "/home/lx/code/aaa/2.6_oneYolo_CHANLLENGE_960_720_git/kfs/";
+    // 使用时间戳或计数器生成唯一文件名
+    static int save_counter = 0;
+    std::string filename = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
+    std::string grayname = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
+    cv::imwrite(filename, img_with_text);
+    // cv::imwrite(grayname, gray_text);
+    // 可选：将保存的文件名写入日志
+    // if(kfs_->kfs_log_.is_open()) kfs_->kfs_log_ << "Saved: " << filename << std::endl;
+}
+// ==========================================
 
 //             for (const auto& pt : pts_left) cv::circle(vis_img, pt, 1, green_color, -1);
 //             for (const auto& pt : pts_right) cv::circle(vis_img, pt, 1, red_color, -1);
-            cv::Mat res = trt_yolo_part2_->res;
-            cv::namedWindow("gray", cv::WINDOW_NORMAL);
-            cv::imshow("gray", gray);
-            cv::namedWindow("res", cv::WINDOW_NORMAL);
-            cv::imshow("res", res);
-            cv::imshow("KFS_Visualization", vis_img);
-            cv::waitKey(1);
+            // cv::Mat res = trt_yolo_part2_->res;
+            // cv::namedWindow("gray", cv::WINDOW_NORMAL);
+            // cv::imshow("gray", gray);
+            // cv::namedWindow("res", cv::WINDOW_NORMAL);
+            // cv::imshow("res", res);
+            // cv::imshow("KFS_Visualization", vis_img);
+            // cv::waitKey(1);
 
             auto finish1 = buffer::Timestamp::now();
             auto diff1 = buffer::Timestamp::diff(finish1, now1);
-            // std::cout << "part2_处理图像时间间隔: " << diff1/1000.0 << " ms" << endl;
+            std::cout << "part2_记录图像时间间隔: " << diff1/1000.0 << " ms" << endl;
         }
     }
 }
@@ -1085,6 +1110,8 @@ void D455Node::process_wall_Loop()
 
 void D455Node::process_state_Loop()
 {
+    if(d455_log_.is_open()) d455_log_ << " start process_state_Loop "  << endl;
+
     while (running_.load() && rclcpp::ok())
     {
         auto now = buffer::Timestamp::now();
@@ -1276,22 +1303,22 @@ void D455Node::process_state_Loop()
 
 
         //连续3次状态相同才发新数据
-        // if(std::memcmp(grid_state_,grid_pre_state_,sizeof(int[3][3]))) //相同 返回 0
-        // {
-        //     std::memcpy(grid_pre_state_, grid_state_, sizeof(int[3][3]));
-        //     count = 0;
-        // }
-        // else 
-        // {
-        //     count++;
-        //     if(count >= 3)
-        //     {
-        //         std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
-        //         count = 0;
-        //     }
-        // }
+        if(std::memcmp(grid_state_,grid_pre_state_,sizeof(int[3][3]))) //相同 返回 0
+        {
+            std::memcpy(grid_pre_state_, grid_state_, sizeof(int[3][3]));
+            count = 0;
+        }
+        else 
+        {
+            count++;
+            if(count >= 3)
+            {
+                std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
+                count = 0;
+            }
+        }
         // cloud_viewer_.add_cloud(kfs_show_cloud,"src");//kfs_show_cloud空
-        std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
+        // std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
 
         gstate_ -> publish_state();
         
@@ -1489,7 +1516,7 @@ void D455Node::displayLoop()
 {
     if(display_)
     {
-        // cv::namedWindow("yolo_detect", cv::WINDOW_NORMAL);
+        cv::namedWindow("yolo_detect", cv::WINDOW_NORMAL);
         cv::namedWindow("src", cv::WINDOW_NORMAL); 
         // cv::namedWindow("grid", cv::WINDOW_NORMAL); 
         cv::namedWindow("grid_mask", cv::WINDOW_NORMAL); 
@@ -1526,7 +1553,7 @@ void D455Node::displayLoop()
         }
 
         // 耗时的 imshow 放在锁外面
-        // if (!disp.empty()) cv::imshow("yolo_detect", disp); 
+        if (!disp.empty()) cv::imshow("yolo_detect", disp); 
         if (!src.empty()) cv::imshow("src", src);
         // if (!grid.empty()) cv::imshow("grid", grid);
         if (!mask.empty()) cv::imshow("grid_mask", mask);

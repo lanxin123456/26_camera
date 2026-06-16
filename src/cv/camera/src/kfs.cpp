@@ -61,8 +61,8 @@ cv::Mat KFS::Kfs(const Mat &frame, cv::Rect& rect, const Mat &depth)
         }
     }
 
-    cv::namedWindow("binary_", cv::WINDOW_NORMAL);
-    cv::imshow("binary_", binary_);
+    // cv::namedWindow("binary_", cv::WINDOW_NORMAL);
+    // cv::imshow("binary_", binary_);
 
     Mat kernel = cv::getStructuringElement(cv::MORPH_RECT, cv::Size(5, 5));
     morphologyEx(binary_, binary_, MORPH_CLOSE, kernel); // 闭运算 填空隙

@@ -17,7 +17,7 @@ namespace trt_yolo {
  */
 inline bool Compition(const det::Object& a, const det::Object& b)
 {
-    return a.x_center > b.x_center;
+    return a.prob > b.prob;
 }
 
 /**

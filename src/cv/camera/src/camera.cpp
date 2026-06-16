@@ -15,7 +15,7 @@ MultiCameraNode::MultiCameraNode(const std::string& config_path) : Node("multi_c
         // kfs_  = std::make_shared<KFS>();
 
         switch_timer_ = this->create_wall_timer(
-            std::chrono::milliseconds(10),
+            std::chrono::milliseconds(5),
             std::bind(&MultiCameraNode::check_and_switch_camera, this));
     }
     catch (const rclcpp::exceptions::RCLError &e) { 
@@ -61,26 +61,33 @@ void MultiCameraNode::check_and_switch_camera()
     int desired_camera{0};
     {
         std::lock_guard<std::mutex> lock(mut_camera_);
-        // desired_camera = target_camera_;
-        desired_camera = 1;
+        desired_camera = target_camera_;
+        // desired_camera = 2;
     }
     if (desired_camera == current_camera_) {
         return;
     }
+    current_camera_ = desired_camera;
 
     //先停止所有当前正在运行的相机
-    stop_all_cameras();
+    // stop_all_cameras();
 
     // 假设：1 代表 D455, 2 代表 Deal, 3 代表 KFS
     cout << "当前模式： " << desired_camera << endl;
     if(camera_error_.is_open()) camera_error_ << "当前模式： " << desired_camera << endl;
 
+    
     switch (desired_camera) {
         case 1:
             if(d455_ != nullptr && !run_d455_) 
             {
                 d455_->start();
                 run_d455_ = true;
+            }
+            if(deal_ != nullptr && run_deal_) 
+            {
+                deal_->stop();
+                run_deal_ = false;
             }
             break;
         case 2:
@@ -89,6 +96,11 @@ void MultiCameraNode::check_and_switch_camera()
                 deal_->start();
                 run_deal_ = true;
             }
+            if(d455_ != nullptr && run_d455_) 
+            {
+                d455_->stop(); 
+                run_d455_ = false;
+            }            
             break;
         case 3:
             if(d455_ != nullptr && !run_d455_) 
@@ -108,12 +120,19 @@ void MultiCameraNode::check_and_switch_camera()
         default:
             break;
     }
-
-    current_camera_ = desired_camera;
 }
 
 void MultiCameraNode::stop_all_cameras()
 {
+    if(current_camera_ == 3) 
+    {
+        if(d455_ != nullptr && run_d455_) 
+        {
+            d455_->stop(); 
+            run_d455_ = false;
+            return;
+        }
+    }
     if(d455_ != nullptr && run_d455_) 
     {
         d455_->stop(); 

@@ -72,7 +72,7 @@ DealImg::DealImg(const std::string& config_path) : node_(std::make_shared<GridPu
 
 bool DealImg::Deal(const cv::Mat &img)
 {
-    if(result_ > 100)
+    if(result_ > 1)
     {
         return false;
     }

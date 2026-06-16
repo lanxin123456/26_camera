@@ -199,7 +199,7 @@ private:
         // std::cout << "\n" << " avg_x1: " << avg_x1 << 
         //         " avg_x2: " << avg_x2 << 
         //         " avg_x3: " << avg_x3 << std::endl;
-        for(const auto& d: mid_distance) std::cout << d << " " << "=======\n" << std::endl;
+        // for(const auto& d: mid_distance) std::cout << d << " " << "=======\n" << std::endl;
         return mid_distance;
     }
 
