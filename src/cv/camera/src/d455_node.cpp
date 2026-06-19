@@ -85,7 +85,7 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 	align_ = std::make_shared<Align>();
     pick_ = std::make_shared<Pick>();
     kfs_ = std::make_shared<KFS>();
-    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_66/best_66.engine");
+    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_619/best_619.engine");
 
 
     sub_start_test_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
@@ -209,7 +209,6 @@ void D455Node::start()
     process_part2_thread_ = std::thread(&D455Node::process_part2_Loop, this);
     process_unet_grid_thread_ = std::thread(&D455Node::process_unet_Loop, this);
 	process_yolo_kfs_thread_ = std::thread(&D455Node::process_yolo_Loop, this);
-	process_yolo_wall_thread_ = std::thread(&D455Node::process_wall_Loop, this);
 
     process_state_thread_ = std::thread(&D455Node::process_state_Loop, this);
     display_thread_ = std::thread(&D455Node::displayLoop, this);
@@ -276,7 +275,6 @@ void D455Node::stop()
     has_frame_part2_ = true;
     has_frame_ = true;
     detect_obj_wall_ = true;
-    has_float_ = true; 
     has_obj_kfs_ = true;
     has_frame_unet_ = true;
     is_identify_KFS_ = false;
@@ -301,8 +299,6 @@ void D455Node::stop()
 
     if (process_yolo_kfs_thread_.joinable()) process_yolo_kfs_thread_.join(); 
 
-    if (process_yolo_wall_thread_.joinable()) process_yolo_wall_thread_.join(); 
-
     if (process_state_thread_.joinable()) process_state_thread_.join(); 
 
     if (display_thread_.joinable()) display_thread_.join();
@@ -310,7 +306,6 @@ void D455Node::stop()
     if (pick_thread_.joinable()) pick_thread_.join();
 
     if (align_thread_.joinable()) align_thread_.join();
-
 
     cv::destroyAllWindows();
     if(d455_log_.is_open()) d455_log_ << "d455 stop 结束" << endl;
@@ -349,7 +344,7 @@ void D455Node::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg) 
 
     // cout << "cam_pos_:\n" << cam_pos_ << "\nR_bw_\n" << R_bw_ << std::endl;
 
-	gstate_->getlidar(lidar_x_, lidar_y_, lidar_z_, lidar_yaw_, lidar_roll_, lidar_pitch_);
+	// gstate_->getlidar(lidar_x_, lidar_y_, lidar_z_, lidar_yaw_, lidar_roll_, lidar_pitch_);
 }
 
 float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthimg, std::ostringstream& oss, int& row, int& col)
@@ -361,37 +356,37 @@ float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthim
 	
     // cout << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << endl;
 
-	if (srcCloud->points.size() < 1000) 
+	if (srcCloud->points.size() < 500) 
 	{
         if(d455_log_.is_open()) oss << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << " 小于 " << 500 << " ";
 		return -1.f;
 	}
 
     // ================== 抽样计算点云离散程度 ================== 0.005ms
-    Eigen::Vector4f centroid;
-    pcl::compute3DCentroid(*srcCloud, centroid);
-    // 抽样计算方差
-    float variance = 0.0f;
-    int sample_count = 0;
-    size_t step = 10;
-    for (size_t i = 0; i < srcCloud->points.size(); i += step)
-    {
-        const auto& point = srcCloud->points[i];
-        if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) continue;
-        float dx = point.x - centroid[0];
-        float dy = point.y - centroid[1];
-        float dz = point.z - centroid[2];
-        variance += (dx * dx + dy * dy + dz * dz);
-        sample_count++;
-    }
-    if (sample_count > 0) variance /= static_cast<float>(sample_count);
-    float dispersion_std_dev = std::sqrt(variance);
-    // cout << " (row:" << row <<  ",col:" << col << ") " << " 点云标准差：" << dispersion_std_dev << endl;
-    if (dispersion_std_dev > dispersion_threshold_)
-    {
-        if(d455_log_.is_open()) oss << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云标准差：" << dispersion_std_dev << " 小于 " << dispersion_threshold_ << " ";
-        return -1.f;
-    }
+    // Eigen::Vector4f centroid;
+    // pcl::compute3DCentroid(*srcCloud, centroid);
+    // // 抽样计算方差
+    // float variance = 0.0f;
+    // int sample_count = 0;
+    // size_t step = 10;
+    // for (size_t i = 0; i < srcCloud->points.size(); i += step)
+    // {
+    //     const auto& point = srcCloud->points[i];
+    //     if (!std::isfinite(point.x) || !std::isfinite(point.y) || !std::isfinite(point.z)) continue;
+    //     float dx = point.x - centroid[0];
+    //     float dy = point.y - centroid[1];
+    //     float dz = point.z - centroid[2];
+    //     variance += (dx * dx + dy * dy + dz * dz);
+    //     sample_count++;
+    // }
+    // if (sample_count > 0) variance /= static_cast<float>(sample_count);
+    // float dispersion_std_dev = std::sqrt(variance);
+    // // cout << " (row:" << row <<  ",col:" << col << ") " << " 点云标准差：" << dispersion_std_dev << endl;
+    // if (dispersion_std_dev > dispersion_threshold_)
+    // {
+    //     if(d455_log_.is_open()) oss << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云标准差：" << dispersion_std_dev << " 小于 " << dispersion_threshold_ << " ";
+    //     return -1.f;
+    // }
     // ==================
 
 	float distance = pcl_->PlaneSegmentation(srcCloud, src_Cloud, 10);
@@ -513,30 +508,30 @@ void D455Node::captureLoop()
             //     is_identify_KFS_ = false;
             // }
 
-            if(is_identify_KFS_)
-            {
-                if(d455_log_.is_open()) d455_log_ << "看手机" << endl;
-                if(dealImg_.Deal(frame)) 
-                {
-                    cv::waitKey(1);
-                }
-                else
-                {
-                    is_identify_KFS_ = false;
-                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
-                    dealImg_.cleanup();
-                }
-            }
+            // if(is_identify_KFS_)
+            // {
+            //     if(d455_log_.is_open()) d455_log_ << "看手机" << endl;
+            //     if(dealImg_.Deal(frame)) 
+            //     {
+            //         cv::waitKey(1);
+            //     }
+            //     else
+            //     {
+            //         is_identify_KFS_ = false;
+            //         std::this_thread::sleep_for(std::chrono::milliseconds(10));
+            //         dealImg_.cleanup();
+            //     }
+            // }
             
             if (!frame.empty()) video_writer.write(frame);
             
             // video_writer.write(dataframe_pick_.src);
-            if(start_test_ == 2) 
+            if(start_test_ == 1) 
             {
                 std::unique_lock<std::mutex> lock(frame_mutex);
                 depth_part2_ = d455_ ->GetDepthImage().clone();
                 src_part2_ = d455_->GetSrcImage().clone();
-                // src_part2_ = cv::imread("/home/lx/frame/test.jpg");
+                // src_part2_ = cv::imread("grid/frame_02224.jpg");
                 has_frame_part2_ = true;
             } 
             get_frame_part2_.notify_all();
@@ -546,7 +541,7 @@ void D455Node::captureLoop()
                 std::unique_lock<std::mutex> lock(frame_mutex);
                 depth_ = d455_ ->GetDepthImage().clone();
                 src_ = d455_->GetSrcImage().clone();
-                // src_ = cv::imread("/home/lx/frame/test.jpg");
+                // src_ = cv::imread("grid/frame_01231.jpg");
                 has_frame_ = true;
             } 
             get_frame_.notify_all();
@@ -554,7 +549,7 @@ void D455Node::captureLoop()
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
                 src_unet_ = d455_->GetSrcImage().clone();
-                // src_unet_ = cv::imread("/home/lx/frame/test.jpg");
+                // src_unet_ = cv::imread("grid/frame_01231.jpg");
                 has_frame_unet_ = true;
             }
             get_frame_unet_.notify_all();
@@ -616,7 +611,7 @@ void D455Node::process_part2_Loop()
         auto diff = buffer::Timestamp::diff(finish, now_part2);
         // std::cout << "part2_更新图像时间间隔: " << diff/1000.0 << " ms" << endl;
 
-        if(start_test_ == 2)  
+        if(start_test_ == 1)  
         {
 
             trt_yolo_part2_->detect(img);
@@ -758,17 +753,16 @@ if (!img.empty())  // 仅当有效时才保存
 
             auto finish1 = buffer::Timestamp::now();
             auto diff1 = buffer::Timestamp::diff(finish1, now1);
-            std::cout << "part2_记录图像时间间隔: " << diff1/1000.0 << " ms" << endl;
+            // std::cout << "part2_记录图像时间间隔: " << diff1/1000.0 << " ms" << endl;
         }
     }
 }
+
 
 void D455Node::process_unet_Loop()
 {
     while (running_.load() && rclcpp::ok())
     {
-        auto now_unet = buffer::Timestamp::now();
-
         cv::Mat img;
         {
             std::unique_lock<std::mutex> lock(frame_unet_mutex);
@@ -779,43 +773,52 @@ void D455Node::process_unet_Loop()
             img = src_unet_;
             has_frame_unet_ = false;
         }
+        if(img.empty()) continue;
 
-        auto finish = buffer::Timestamp::now();
-        auto diff = buffer::Timestamp::diff(finish, now_unet);
-        // std::cout << "trt_seg_更新图像时间间隔: " << diff/1000.0 << " ms" << endl;
-
-        Eigen::Matrix3d R_bw;
-        Eigen::Vector3d cam_pos;
-
+        int start_test{0};
         {
-            std::lock_guard<std::mutex> lock(mut_pos_);
-            cam_pos = cam_pos_;
-            R_bw = R_bw_;
+            std::unique_lock<std::mutex> lock(start_mutex_);
+            start_test = start_test_;
         }
+        if(start_test != 2) continue;
 
-        if(start_test_ == 1)  {
-            trt_seg_->detect(img);
+        trt_seg_->detect(img);//--12ms
 
-            std::vector<Unet::Quad2D> quads = trt_seg_->getgridquads(img, R_bw, cam_pos); 
-            distances_ = fitPixelScale(quads);
+        float pos_z{910.0};
+        { 
+            std::unique_lock<std::mutex> lock(mut_pos_);
+            pos_z = lidar_z_ + 400 + 431 + 80;
+            pos_z += 200;
+            if(d455_log_.is_open()) d455_log_  << " pos_z: " << pos_z << endl;
+        } 
 
-            gstate_ -> publish_dist(distances_);
+        std::vector<Unet::Quad2D> quads = trt_seg_->getgridquads(img, pos_z); //--4ms
+        
+        distances_ = fitPixelScale(quads);
 
-            auto finish_unet = buffer::Timestamp::now();
-            auto diff_unet = buffer::Timestamp::diff(finish_unet, now_unet);
-            // std::cout << "trt_seg_检测时间间隔: " << diff_unet/1000.0 << " ms" << endl;
-
-            QuadsData new_data;
-            new_data.quads = std::move(quads);
-            new_data.timestamp = std::chrono::steady_clock::now();
-            {
-                std::lock_guard<std::mutex> lock(buffer_mutex_);
-                quads_buffer_.push_back(std::move(new_data));
-                while (quads_buffer_.size() > max_buffer_size_){
-                    quads_buffer_.erase(quads_buffer_.begin());
-                }
+        QuadsData new_data;
+        new_data.quads = std::move(quads);
+        new_data.timestamp = std::chrono::steady_clock::now();
+        {
+            std::lock_guard<std::mutex> lock(buffer_mutex_);
+            quads_buffer_.push_back(std::move(new_data));
+            while (quads_buffer_.size() > max_buffer_size_){
+                quads_buffer_.erase(quads_buffer_.begin());
             }
         }
+
+        float nine_square_depth_value{0.f};
+        std::ostringstream oss;
+        nine_square_depth_value = trt_seg_->Getdep();
+
+        gstate_ -> publish_dist(distances_, nine_square_depth_value, pos_z);
+
+        if(d455_log_.is_open()) d455_log_ << std::fixed << std::setprecision(1) << " yolo九宫格深度: " << nine_square_depth_value << " 车x: " << nine_square_depth_value + (199+57-8) + 150;
+        {
+            std::unique_lock<std::mutex> lock(compute_state_);
+            nine_square_depth_value_ = nine_square_depth_value;   
+        }     
+        has_float_ = true;    
     }
 }
 
@@ -862,14 +865,6 @@ void D455Node::process_yolo_Loop()
             dep = depth_; 
             has_frame_ = false;   
         }  
-
-        // auto now_unet = buffer::Timestamp::now();
-
-        // if(start_test_ == 1)  trt_seg_->detect(img);
-
-        // auto finish_unet = buffer::Timestamp::now();
-        // auto diff_unet = buffer::Timestamp::diff(finish_unet, now_unet);
-        // std::cout << "trt_seg_检测时间间隔: " << diff_unet/1000.0 << " ms" << endl;
 
         //-----
         dataframe_align_.depth = dep;
@@ -942,7 +937,7 @@ void D455Node::process_yolo_Loop()
 
         {
             std::unique_lock<std::mutex> lock(compute_state_);
-            if(retain_ && start_test_ == 1 )
+            if(retain_ && start_test_ == 2 )
             {
                 objs_kfs_red_state_.clear();
                 objs_kfs_red_state_.reserve(objs_kfs_red_r1.size() + objs_kfs_red_r2.size());
@@ -991,123 +986,6 @@ void D455Node::process_yolo_Loop()
     cout << "process_yolo_Loop 线程退出" << endl;
 }
 
-//计算九宫格深度
-void D455Node::process_wall_Loop()
-{ 
-	while (running_.load() && rclcpp::ok())
-	{ 
-        auto now = buffer::Timestamp::now();
-        auto now0 = buffer::Timestamp::now();
-
-        cv::Mat img, white_mask; 
-        std::vector<trt_yolo::det::Object> objs_wall;
-        int current_mode{0};
-        float nine_square_depth_value{0.f};
-        float lidar_x{1500.f};
-        {
-            std::unique_lock<std::mutex> lock(lidar_);
-            lidar_x = lidar_x_ ;
-        }
-        {   // 19ms
-            std::unique_lock<std::mutex> lock(compute_state_);
-            get_wall_.wait(lock,[&]{
-                return (detect_obj_wall_ || !rclcpp::ok() || !running_);
-            }); 
-            if(!rclcpp::ok() || !running_) 
-            {
-                break;
-            }
-            objs_wall = objs_wall_;
-            white_mask = white_mask_;
-        }
-        detect_obj_wall_ = false;
-
-        auto finish0 = buffer::Timestamp::now();
-        auto diff0 = buffer::Timestamp::diff(finish0, now0);
-        // std::cout << "等待时间 间隔: " << diff0/1000.0 << " ms" << endl;
-
-        auto now1 = buffer::Timestamp::now();
-
-        // bool is_valid = (objs_wall[0].rect.height != 0) &&
-        //                 (objs_wall[0].rect.width != 0) &&
-        //                 (objs_wall[0].rect.width / objs_wall[0].rect.height > 1/5) &&
-        //                 (objs_wall[0].rect.height / objs_wall[0].rect.width > 1/5);
-
-        if(!objs_wall.empty()) // 3ms: 得到 wall【原始】点云
-        {
-            d455_->PointCloudGenerateRectandMask(objs_wall[0].rect,white_mask,lidar_x);//得到wallCloud点云
-            pPointCloud wall_cloud = d455_->GetWallCloud(); 
-            // RCLCPP_INFO(this->get_logger(), "[原始]wall_cloud->points.size(): %d", wall_cloud->points.size());
-            if(wall_cloud->points.size() > 3000) 
-            {
-                current_mode = 1;
-            }
-        }
-        else
-        {
-            current_mode = 0; 
-        }
-        auto finish1 = buffer::Timestamp::now();
-        auto diff1 = buffer::Timestamp::diff(finish1, now1);
-        // std::cout << "得到 wall【原始】点云间隔: " << diff1/1000.0 << " ms" << endl;
-
-        auto now2 = buffer::Timestamp::now();
-
-        std::ostringstream oss;
-        pPointCloud wall_cloud_out = std::make_shared<PointCloud>();
-
-        current_mode = 0;
-
-        Eigen::Matrix3d R_bw;
-        Eigen::Vector3d cam_pos;
-
-        {
-            std::lock_guard<std::mutex> lock(mut_pos_);
-            cam_pos = cam_pos_;
-            R_bw = R_bw_;
-        }
-        cv::Mat latest_img_state;
-        {
-            std::unique_lock<std::mutex> lock(compute_state_);
-            latest_img_state = latest_img_state_;
-        }
-
-        // quads_ = trt_seg_->getgridquads(latest_img_state, R_bw, cam_pos); 
-        // distances_ = fitPixelScale(quads_);
-
-        // gstate_ -> publish_dist(distances_);
-
-        nine_square_depth_value  = computeDepthByMode(current_mode, lidar_x, wall_cloud_out); // 1ms
-
-        if(d455_log_.is_open()) oss << std::fixed << std::setprecision(1) 
-                                    << " lidar_x: " << lidar_x
-                                    << " cloud_state_模式: " << current_mode
-                                    << " yolo九宫格深度: " << nine_square_depth_value 
-                                    << " wall【处理后】点云数: " << wall_cloud_out->size();
-        {
-            std::unique_lock<std::mutex> lock(compute_state_);
-            nine_square_depth_value_ = nine_square_depth_value;   
-            has_float_ = true; 
-        }     
-        final_state_.notify_one();   
-
-        if (d455_log_.is_open()) 
-        {
-            d455_log_ << oss.str() << "\n-------------------------------\n";
-            // d455_log_.flush();
-        }  
-
-        auto finish2 = buffer::Timestamp::now();
-        auto diff2 = buffer::Timestamp::diff(finish2, now2);
-        // std::cout << "计算九宫格深度 间隔: " << diff2/1000.0 << " ms" << endl;
-
-        auto finish = buffer::Timestamp::now();
-        auto diff = buffer::Timestamp::diff(finish, now);
-        // std::cout << "process_wall_Loop时间间隔: " << diff/1000.0 << " ms" << endl;
-    } 
-    if(show_test_) cout << "process_wall_Loop 线程退出" << endl;
-}
-
 void D455Node::process_state_Loop()
 {
     if(d455_log_.is_open()) d455_log_ << " start process_state_Loop "  << endl;
@@ -1130,7 +1008,7 @@ void D455Node::process_state_Loop()
         {   // 18ms ~ 38ms
             std::unique_lock<std::mutex> lock(compute_state_);
             final_state_.wait(lock, [this]{
-                return (has_float_ && has_obj_kfs_) || !rclcpp::ok() || !running_;
+                return (has_obj_kfs_ && has_float_) || !rclcpp::ok() || !running_;
             });
             if(!rclcpp::ok() || !running_) 
             {
@@ -1141,15 +1019,15 @@ void D455Node::process_state_Loop()
             objs_kfs_blue_state = objs_kfs_blue_state_;
             depth = latest_depth_state_;
             has_obj_kfs_ = false;
-            has_float_ = false; 
+            has_float_ = false;
             retain_ = true;//防止在等 has_float_ 时 objs_kfs_ 更新
-            if(retain_) 
-            {
-                if (d455_log_.is_open()) 
-                {
-                    d455_log_ << " retain_ = true" << endl;
-                }
-            }
+            // if(retain_) 
+            // {
+            //     if (d455_log_.is_open()) 
+            //     {
+            //         d455_log_ << " retain_ = true" << endl;
+            //     }
+            // }
             latest_img_state = latest_img_state_;
             now_time = quads_timestamp_;
         }
@@ -1169,7 +1047,11 @@ void D455Node::process_state_Loop()
         gstate_ -> sortObjectsOrder_Red(objs_kfs_state);
 
         std::vector<Unet::Quad2D> quads = getNearestQuads(now_time);
-        if(quads.empty()) continue;
+        if(quads.empty()) 
+        {
+            cout << "quads为空" << endl;
+            continue;
+        }
         for (const auto& quad : quads)
         {
             cv::Scalar color = quad.valid ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
@@ -1228,7 +1110,7 @@ void D455Node::process_state_Loop()
             
             float kfs_depth_value = rectangle_depth(obj.rect, depth, oss, row, col);// 1ms
 
-            if(kfs_depth_value < 300 || kfs_depth_value > 3000) 
+            if(kfs_depth_value < 300 || kfs_depth_value > 4000) 
             {
                 grid_state_[row][col] = 0;
                 if(d455_log_.is_open()) oss << " [ERROR: " << matched_grid_id << "号kfs深度: " << kfs_depth_value << "] ";
@@ -1320,11 +1202,24 @@ void D455Node::process_state_Loop()
         // cloud_viewer_.add_cloud(kfs_show_cloud,"src");//kfs_show_cloud空
         // std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
 
+        for (int i = 0; i < 3; ++i)
+        {
+            oss << "{";
+            for (int j = 0; j < 3; ++j)
+            {
+                oss << gstate_->grid_state_[i][j] << " ";
+            }
+            oss << "}";
+            if (i != 2) oss << ", ";
+        }
+
+        oss << "\n------------------------------------------\n";
+         
         gstate_ -> publish_state();
         
         if (d455_log_.is_open()) 
         {
-            d455_log_ << oss.str(); 
+            d455_log_ << oss.str() << "\n"; 
         } 
         auto finish = buffer::Timestamp::now();
         auto diff = buffer::Timestamp::diff(finish, now);

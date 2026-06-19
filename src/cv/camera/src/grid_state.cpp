@@ -104,8 +104,8 @@ void Grid_State::getlidar(const float& lidar_x,
             lidar_roll_
         );
 
-        Eigen::Vector3d t_car_cam(-11.0, 199+57-8, 431+80);
-
+        Eigen::Vector3d t_car_cam(-21.0, 199+57-8, 431+80);
+        
         cam_pos_w_ = p_car_w + R_wb_ * t_car_cam;
         // cout << "lidar_x_: " << lidar_x_ << " cam_pos_w_.x(): " << cam_pos_w_.x() << endl;
         // if(cam_pos_w_.z() > 800 && cam_pos_w_.z() < 1000) cam_pos_w_.z() = 950.0;
@@ -368,23 +368,23 @@ bool Grid_State::rectCenterInPlane(const cv::Rect_<float>& rect,int plane_id)
     return true;
 }
 
-void Grid_State::logState(std::vector<float> distances)
+void Grid_State::logState(std::vector<float> distances,const float& nine_square_depth_value, const float& pos_z)
 {
     if (!gride_state.is_open())
         return;
 
     std::ostringstream oss;
-    oss << "  进入里程计回调  ";
+    // oss << "  进入里程计回调  ";
     
-    oss << "  pos  = (" << cam_pos_w_.x() << ", "
-                         << cam_pos_w_.y() << ", "
-                         << cam_pos_w_.z() << ")";
+    // oss << "  pos  = (" << cam_pos_w_.x() << ", "
+    //                      << cam_pos_w_.y() << ", "
+    //                      << cam_pos_w_.z() << ")";
 
-    oss << "  rpy  = (" << lidar_roll_ << ", "
-                         << lidar_pitch_ << ", "
-                         << lidar_yaw_ << ")";
+    // oss << "  rpy  = (" << lidar_roll_ << ", "
+    //                      << lidar_pitch_ << ", "
+    //                      << lidar_yaw_ << ")";
 
-    oss << "   Grid State: ";
+    oss << " pos_z: " << pos_z << "   Grid State: ";
     for (int i = 0; i < 3; ++i)
     {
         oss << "{";
@@ -395,6 +395,14 @@ void Grid_State::logState(std::vector<float> distances)
         oss << "}";
         if (i != 2) oss << ", ";
     }
+
+    oss << " distances: [";
+    for (int i = 0; i < distances.size(); ++i)
+    {
+        oss << distances[i] << " ";
+        if (i != 2) oss << ", ";
+    }
+    oss << " ]"  << " 发布的|x|: " << nine_square_depth_value + (199+57-8) + 150 ;
 
     oss << "\n------------------------------------------\n";
 
@@ -429,9 +437,9 @@ void Grid_State::publish_state()
     publisher_state_->publish(gridstate_msg);
 }
 
-void Grid_State::publish_dist(std::vector<float> distances)
+void Grid_State::publish_dist(std::vector<float> distances,const float& nine_square_depth_value, const float& pos_z)
 {
-    logState(distances);
+    logState(distances, nine_square_depth_value, pos_z);
 
     auto griddist_msg = base_interfaces::msg::GridDistances();
 
@@ -440,7 +448,9 @@ void Grid_State::publish_dist(std::vector<float> distances)
         if(abs(distances[0]) < 2500) griddist_msg.col_first = distances[0];
         if(abs(distances[1]) < 2500) griddist_msg.col_second = distances[1];
         if(abs(distances[2]) < 2500) griddist_msg.col_third = distances[2];
+        // if(nine_square_depth_value > 0) griddist_msg.x = nine_square_depth_value + (199+57-8) + 150;
     }
+    
     publisher_dist_->publish(griddist_msg);
 }
 

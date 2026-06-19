@@ -98,7 +98,7 @@ public:
     void sortObjectsOrder_Red(std::vector<trt_yolo::det::Object>& objs);
     float get_x() {return static_cast<float>(cam_pos_w_.x());};
     void publish_state();
-    void publish_dist(std::vector<float> distances);
+    void publish_dist(std::vector<float> distances, const float& nine_square_depth_value, const float& pos_z);
 
 private:
 
@@ -145,5 +145,5 @@ private:
         const std::vector<Eigen::Vector3d>& quad,
         const Eigen::Vector3d& normal);
     void thickenQuad(std::vector<Eigen::Vector3d>& quad, double scale);
-    void logState(std::vector<float> distances);
+    void logState(std::vector<float> distances, const float& nine_square_depth_value, const float& pos_z);
 };

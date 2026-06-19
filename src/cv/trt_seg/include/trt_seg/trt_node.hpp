@@ -50,9 +50,7 @@ class TRTNode : public rclcpp::Node {
 public:
     TRTNode(const std::string& engine_path);
     ~TRTNode();
-    std::vector<Unet::Quad2D> getgridquads(const cv::Mat& frame,
-                                    Eigen::Matrix3d R_wb_, 
-                                    Eigen::Vector3d cam_pos_);
+    std::vector<Unet::Quad2D> getgridquads(const cv::Mat& frame, float& pos_z);
     void detect(const cv::Mat& frame);
     float Getdep() const { return grid_depth_; };
     cv::Mat Getcanvas()  {
@@ -135,8 +133,9 @@ private:
         std::vector<cv::Point> points;
         float intercept = 0.0f;    // 竖线为中心Y轴切出的X截距，横线为中心X轴切出的Y截距
         float angle = 0.0f;        // 直线弧度角
-        cv::Point2f pt1;    
-        cv::Point2f pt2;    
+        
+        float min_w;
+        float max_w;
     };
 
     struct TrackedLine {
@@ -161,6 +160,8 @@ private:
         LineCandidate line;
         bool valid = false;
     };
+
+    void filterLinesByGridConsistency(std::vector<LineCandidate>& candidates, float est_grid_w, cv::Mat& mask_to_clear);
 
     cv::Point2f computeIntersection(const cv::Vec4f& line1, const cv::Vec4f& line2);
     cv::Vec4f slotToVec4f(const TrackedLine& tl, bool is_vertical);
