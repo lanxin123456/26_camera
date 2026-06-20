@@ -17,7 +17,7 @@ D455Node:
     white_hsv_min: [0, 0, 110, 0]
     white_hsv_max: [180, 40, 255, 0]
   ActD_params:
-    bag_path: "/home/lx/d455_1781759640.bag"
+    bag_path: "/home/lx/d455_1781937541.bag"
 
 # Deal parameters
 Deal:

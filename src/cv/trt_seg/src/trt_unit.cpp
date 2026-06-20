@@ -215,13 +215,13 @@ void TRTNode::computeGridQuads(int src_w, int src_h, int net_w, int net_h) {
                 }
             }
             // ==================== 【新增：输出每个格子的四点坐标】 ====================
-            std::cout << "[格子 " << r << "-" << c << "] "
-                      << (quad.valid ? "\033[1;32m[有效 Valid]\033[0m" : "\033[1;31m[无效 Invalid]\033[0m") << "\n"
-                      << "  左上 (TL): (" << quad.pts[0].x << ", " << quad.pts[0].y << ")\n"
-                      << "  左下 (BL): (" << quad.pts[1].x << ", " << quad.pts[1].y << ")\n"
-                      << "  右下 (BR): (" << quad.pts[2].x << ", " << quad.pts[2].y << ")\n"
-                      << "  右上 (TR): (" << quad.pts[3].x << ", " << quad.pts[3].y << ")\n"
-                      << "-------------------------------------------" << std::endl;
+            // std::cout << "[格子 " << r << "-" << c << "] "
+            //           << (quad.valid ? "\033[1;32m[有效 Valid]\033[0m" : "\033[1;31m[无效 Invalid]\033[0m") << "\n"
+            //           << "  左上 (TL): (" << quad.pts[0].x << ", " << quad.pts[0].y << ")\n"
+            //           << "  左下 (BL): (" << quad.pts[1].x << ", " << quad.pts[1].y << ")\n"
+            //           << "  右下 (BR): (" << quad.pts[2].x << ", " << quad.pts[2].y << ")\n"
+            //           << "  右上 (TR): (" << quad.pts[3].x << ", " << quad.pts[3].y << ")\n"
+            //           << "-------------------------------------------" << std::endl;
             // =====================================================================
             
             quads_.push_back(quad);
@@ -314,9 +314,7 @@ void TRTNode::filterLinesByGridConsistency(std::vector<LineCandidate>& candidate
     for (size_t i = 0; i < candidates.size(); ++i) {
         int valid_gaps = 0;
         int invalid_gaps = 0;
-
-        std::cout << candidates[i].intercept << std::endl;
-
+        // std::cout << candidates[i].intercept << std::endl;
         for (size_t j = 0; j < candidates.size(); ++j) {
             if (i == j) continue;
             float dist = std::abs(candidates[i].intercept - candidates[j].intercept);
@@ -334,14 +332,12 @@ void TRTNode::filterLinesByGridConsistency(std::vector<LineCandidate>& candidate
                 invalid_gaps++;
             }
         }
-
         // 如果错误的间隔 >= 2，判定为误检线
         if (invalid_gaps >= 2) {
             to_remove[i] = true;
             // std::cout << "误检线: " << i << " 条" << std::endl;
         }
     }
-
     // 执行剔除
     auto it = candidates.begin();
     for (size_t i = 0; i < to_remove.size(); ++i) {
@@ -387,7 +383,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
     
     std::cout << "原始竖线条数: " << v_candidates.size() << " 原始横线条数: " << h_candidates.size() << std::endl;
     // ==================== 【0. 新增：计算 best_d 前，基于现有线自适应估算格子像素宽度】 ====================
-    float est_grid_w = 0.0f;
+    float est_grid_w = tracked_grid_size_;
     {
         std::vector<float> diffs;
         if (v_candidates.size() >= 2) {
@@ -409,7 +405,6 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             std::vector<float> y_vals;
             for (const auto& hc : h_candidates) y_vals.push_back(hc.intercept);
             std::sort(y_vals.begin(), y_vals.end()); // 排序确保 y_vals[j] > y_vals[i]
-            
             for (size_t i = 0; i < y_vals.size(); ++i) {
                 for (size_t j = i + 1; j < y_vals.size(); ++j) {
                     float d = y_vals[j] - y_vals[i];
@@ -423,14 +418,11 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         if (diffs.size() >= 3) {
             // 1. 必须先排序，才能进行高效的临近聚类
             std::sort(diffs.begin(), diffs.end());
-            
             std::vector<std::vector<float>> clusters;
             std::vector<float> current_cluster = {diffs[0]};
-            
             // 聚类阈值比例：邻近的间距值差异在 15% 以内则划分为同一种网格大小
             // 这比固定像素阈值更优秀，能完美适应相机视野中“近大远小”的透视形变
             const float CLUSTER_THRESH_RATIO = 0.15f; 
-            
             for (size_t i = 1; i < diffs.size(); ++i) {
                 if ((diffs[i] - diffs[i-1]) <= (diffs[i-1] * CLUSTER_THRESH_RATIO)) {
                     current_cluster.push_back(diffs[i]);
@@ -440,7 +432,6 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
                 }
             }
             clusters.push_back(current_cluster); // 压入最后一簇
-            
             // 2. 寻找包含元素数量最多（最具有代表性）的一簇
             size_t max_size = 0;
             size_t best_cluster_idx = 0;
@@ -450,14 +441,12 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
                     best_cluster_idx = i;
                 }
             }
-            
             // 3. 计算该最大簇内所有有效间距的平均值
             float sum = 0.0f;
             for (float val : clusters[best_cluster_idx]) {
                 sum += val;
             }
             est_grid_w = sum / clusters[best_cluster_idx].size();
-            
             std::cout << "\033[1;32m[GRID CLUSTER] 聚类成功 -> 独立簇数: " << clusters.size() 
                         << " | 最大簇样本数: " << max_size << "\033[0m" << std::endl;
         } 
@@ -467,13 +456,18 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             est_grid_w = diffs[diffs.size() / 2]; 
         }
     }
-
+    //至少在一个方向上有两个线时， est_grid_w != 0
     std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
+    test_grid_size_ = est_grid_w;
+
+
+    // ====================  根据格子初步宽度 去除杂线  ====================
 
     if (est_grid_w > 10.0f && (v_candidates.size() >= 3 || h_candidates.size() >= 3)) {
         filterLinesByGridConsistency(v_candidates, est_grid_w, merged_mask_);
         filterLinesByGridConsistency(h_candidates, est_grid_w, merged_mask_);
     }
+
 
     // ==================== 【1. 基于自适应像素宽度直接解析计算最佳深度 best_d】 ====================
     const float Z_w_vals[4] = {2410.0f, 1880.0f, 1340.0f, 810.0f};
@@ -494,30 +488,24 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             std::cout << "[解析深度估计] 未提取到有效单格像素宽度，启用默认兜底 best_d: " << best_d << " mm" << std::endl;
         }
     }
+    // std::cout << "best_d: " << best_d << " pos_z: " << pos_z << std::endl;
 
-    std::cout << "best_d: " << best_d << std::endl;
-
-    float ideal_h_v[4];
+    //====================  匹配横线 ====================
     for (int s = 0; s < 4; ++s) {
-        ideal_h_v[s] = (fy_ * (pos_z - Z_w_vals[s])) / best_d + ppy_;
-        std::cout << "ideal_h_v[" << s << "]: " << ideal_h_v[s] << std::endl;
+        ideal_h_v_[s] = (fy_ * (pos_z - Z_w_vals[s])) / best_d + ppy_;
+        // std::cout << "ideal_h_v_[" << s << "]: " << ideal_h_v_[s] << std::endl;
     }
-
-    std::cout << "///////////" << std::endl;
     for(int i = 0; i < h_candidates.size(); ++i)
     {
-        std::cout << "h_candidates[" << i << "]: " << h_candidates[i].intercept << " " <<  180 * (h_candidates[i].angle / 3.1415) << std::endl;
+        // std::cout << "h_candidates[" << i << "]: " << h_candidates[i].intercept << " " <<  180 * (h_candidates[i].angle / 3.1415) << std::endl;
     }
-
     float avg_h_angle = 0.0f;
     int h_match_cnt = 0;
     const float MATCH_THRESH_V = est_grid_w / 2; 
-
     for (int s = 0; s < 4; ++s) {
-        float ideal_v = ideal_h_v[s];
+        float ideal_v = ideal_h_v_[s];
         int best_match_idx = -1;
         float min_diff = MATCH_THRESH_V;
-
         for (size_t i = 0; i < h_candidates.size(); ++i) {
             float diff = std::abs(h_candidates[i].intercept - ideal_v);
             if (diff < min_diff) {
@@ -525,87 +513,59 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
                 best_match_idx = i;
             }
         }
-
         if (best_match_idx != -1) {
             tracked_h_[s].intercept = h_candidates[best_match_idx].intercept;
             tracked_h_[s].angle = h_candidates[best_match_idx].angle;
             avg_h_angle += tracked_h_[s].angle;
+            tracked_h_[s].is_visible = true; 
             h_match_cnt++;
         } else {
             tracked_h_[s].intercept = ideal_v;
             tracked_h_[s].angle = 0.0f; 
+            tracked_h_[s].is_visible = false; 
         }
-        tracked_h_[s].is_visible = true; 
     }
-
-    // 修正未匹配到真实横线的倾斜角
     avg_h_angle = (h_match_cnt > 0) ? (avg_h_angle / h_match_cnt) : 0.0f;
-    std::cout << "avg_h_angle: " << 180 * (avg_h_angle / 3.1415) << " 度" << std::endl;
+    // std::cout << "avg_h_angle: " << 180 * (avg_h_angle / 3.1415) << " 度" << std::endl;
     for (int s = 0; s < 4; ++s) {
-        std::cout << "tracked_h_[" << s << "].intercept: " << tracked_h_[s].intercept << std::endl;
+        // std::cout << "tracked_h_[" << s << "].intercept: " << tracked_h_[s].intercept << std::endl;
         if (tracked_h_[s].angle == 0.0f) {
             tracked_h_[s].angle = avg_h_angle;
         }
     }
 
-    // ==================== 【2. 依据横线解出的网格间距，智能拓扑竖线】 ====================
-    // float avg_v_angle = CV_PI / 2.0f;
-    // if (!v_candidates.empty()) {
-    //     float sum_ang = 0; 
-    //     for (auto vc : v_candidates){
-    //         if(vc.angle < 0) vc.angle = -vc.angle;
-    //         sum_ang += vc.angle;
-    //     }
-    //     avg_v_angle = sum_ang / v_candidates.size();
-    // }
+    // ==================== 拓扑时序槽位追踪与节点输出 ====================
+    return trackGridAndGetNodes(v_candidates, est_grid_w, frame, merged_mask_);
+}
 
-    // 确定最终用于地理探测的格子像素宽度 grid_w
-    float L_grid = 535.0f * (fx_ / best_d);
-    if (L_grid < 10.0f) L_grid = 120.0f; 
-    float grid_w = (est_grid_w > 10.0f) ? est_grid_w : L_grid; // 优先使用前级图像直测的宽度，无测值则用物理外推值兜底
 
-    // 创建局部白点像素统计探测器 lambda
+
+bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates, 
+                                    int max_dim, 
+                                    const float& est_grid_w, 
+                                    const cv::Mat& mask,
+                                    std::vector<float>& final_intercepts, 
+                                    std::vector<float>& final_angles)
+{
+
     auto count_mask_pixels = [&](float center_x, float strip_width) {
-        int count = 0;
-        // int start_x = static_cast<int>(center_x - strip_width / 2.0f);
-        // int end_x = static_cast<int>(center_x + strip_width / 2.0f);
-
-        // std::cout << "start_x: " << start_x << " end_x: " << end_x << std::endl;
+        if (std::isnan(center_x) || center_x < 0 || center_x >= mask.cols) return 0;
         
-        // if(start_x < 0) 
-        // {
-        //     return 0;
-        //     start_x = 0;
-        // }
-        // if(end_x >= merged_mask_.cols) 
-        // {
-        //     return 0;
-        //     end_x = merged_mask_.cols - 1;
-        // }
-
-        // std::cout << "更新后start_x: " << start_x << " end_x: " << end_x << std::endl;
-
-        // if (start_x > end_x) return 0;
-
-        std::cout << "center_x: " << center_x  << std::endl;
-
-        if(center_x < 0 || center_x >= merged_mask_.cols) return 0;
-
-        for (int r = 0; r < merged_mask_.rows; r += 2) { // 步长2加快扫描
-            // for (int c = start_x; c <= end_x; ++c) {
-                if (merged_mask_.at<uchar>(r, center_x) > 0) {
-                    count++;
-                }
-            // }
+        int count = 0;
+        int col = static_cast<int>(center_x); // 显式转为整型列坐标
+        for (int r = 0; r < mask.rows; r += 2) {
+            if (mask.at<uchar>(r, col) > 0) {
+                count++;
+            }
         }
         return count;
     };
-    float strip_w = std::max(10.0f, grid_w * 0.1f); // 动态自适应探测宽度（给目标线左右留出适当容差）
+    
+    float strip_w = std::max(10.0f, est_grid_w * 0.1f); // 动态自适应探测宽度（给目标线左右留出适当容差）
 
     int num_v = v_candidates.size();
 
-    // --- 情况 1: 条数 >= 4 (提取点数最多前 4 条并从左至右排序) ---
-    std::cout << "\n竖线条数: " << num_v << std::endl;
+
     if (num_v >= 4) {
         std::sort(v_candidates.begin(), v_candidates.end(), [](const LineCandidate& a, const LineCandidate& b) {
             return a.points.size() > b.points.size();
@@ -615,11 +575,12 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             return a.intercept < b.intercept;
         });
         for (int i = 0; i < 4; ++i) {
-            tracked_v_[i].intercept = top4[i].intercept;
-            tracked_v_[i].angle = top4[i].angle;
+            final_intercepts[i] = top4[i].intercept;
+            final_angles[i] = top4[i].angle;
         }
+        return true;
     }
-    // --- 情况 2: 条数 == 3 (依据两两间距定位出到底是哪一列丢失，并拓扑补齐) ---
+    
     else if (num_v == 3) {
         std::sort(v_candidates.begin(), v_candidates.end(), [](const LineCandidate& a, const LineCandidate& b) {
             return a.intercept < b.intercept;
@@ -633,82 +594,99 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         float a2 = v_candidates[2].angle;
 
         float x_min = v_candidates[0].min_w;
-        float x_max = v_candidates[1].max_w;
+        float x_max = v_candidates[2].max_w;
 
         float g1 = x1 - x0; float g2 = x2 - x1;
 
-        std::cout << "g1: " << g1 << " g2: " << g2 << " L_grid: " << L_grid << std::endl;
-        if (g1 > 1.45f * L_grid) { // 槽位 1 缺失 (断开的是左间距)
-            tracked_v_[0].intercept = x0;
-            tracked_v_[1].intercept = x0 + L_grid;
-            tracked_v_[2].intercept = x1;
-            tracked_v_[3].intercept = x2;
+        std::cout << "g1: " << g1 << " g2: " << g2 << " est_grid_w: " << est_grid_w << std::endl;
+        if (g1 > 1.45f * est_grid_w) { // 槽位 1 缺失 (断开的是左间距)
+            final_intercepts[0] = x0;
+            final_intercepts[1] = x0 + est_grid_w;
+            final_intercepts[2] = x1;
+            final_intercepts[3] = x2;
 
-            tracked_v_[0].angle = a0;
-            tracked_v_[1].angle = a0;
-            tracked_v_[2].angle = a1;
-            tracked_v_[3].angle = a2;
+            final_angles[0] = a0;
+            final_angles[1] = a0;
+            final_angles[2] = a1;
+            final_angles[3] = a2;
 
-        } else if (g2 > 1.45f * L_grid) { // 槽位 2 缺失 (断开的是右间距)
-            tracked_v_[0].intercept = x0;
-            tracked_v_[1].intercept = x1;
-            tracked_v_[2].intercept = x1 + L_grid;
-            tracked_v_[3].intercept = x2;
+            return true;
 
-            tracked_v_[0].angle = a0;
-            tracked_v_[1].angle = a1;
-            tracked_v_[2].angle = a1;
-            tracked_v_[3].angle = a2;
-        } else { // 两侧间距均为标准 1x L_grid，说明缺的是最左边界(槽位0)或最右边界(槽位3)
-            std::cout << "left_x: " << x0 + x_min - 0.2f * grid_w << " right_x: " << x2 + x_max + 0.2f * grid_w << " strip_w: " << strip_w << std::endl;
+        } else if (g2 > 1.45f * est_grid_w) { // 槽位 2 缺失 (断开的是右间距)
+            final_intercepts[0] = x0;
+            final_intercepts[1] = x1;
+            final_intercepts[2] = x1 + est_grid_w;
+            final_intercepts[3] = x2;
 
-            int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * grid_w, strip_w);
-            int right_pixels = count_mask_pixels(x2 + x_max + 0.1f * grid_w, strip_w);
+            final_angles[0] = a0;
+            final_angles[1] = a1;
+            final_angles[2] = a1;
+            final_angles[3] = a2;
+
+            return true;
+            
+        } else {  
+            std::cout << "left_x: " << x0 + x_min - 0.2f * est_grid_w << " right_x: " << x2 + x_max + 0.2f * est_grid_w << " strip_w: " << strip_w << std::endl;
+
+            int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * est_grid_w, strip_w);
+            int right_pixels = count_mask_pixels(x2 + x_max + 0.1f * est_grid_w, strip_w);
 
             std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
-            if (left_pixels > right_pixels && left_pixels > 5) { // 左侧区域存在网格横线 -> 说明缺失的是左外壁边界
-                tracked_v_[0].intercept = x0 - L_grid;
-                tracked_v_[1].intercept = x0; tracked_v_[2].intercept = x1; tracked_v_[3].intercept = x2;
+            if (left_pixels > right_pixels && left_pixels > 5) { 
+                final_intercepts[0] = x0 - est_grid_w;
+                final_intercepts[1] = x0; final_intercepts[2] = x1; final_intercepts[3] = x2;
 
-                tracked_v_[0].angle = a0;
-                tracked_v_[1].angle = a0;
-                tracked_v_[2].angle = a1;
-                tracked_v_[3].angle = a2;
+                final_angles[0] = a0;
+                final_angles[1] = a0;
+                final_angles[2] = a1;
+                final_angles[3] = a2;
+
+                return true;
+
             } 
-            else if (left_pixels < right_pixels && right_pixels > 5) { // 右侧区域存在网格横线 -> 说明缺失的是右外壁边界
-                tracked_v_[0].intercept = x0; tracked_v_[1].intercept = x1; tracked_v_[2].intercept = x2;
-                tracked_v_[3].intercept = x2 + L_grid;
+            else if (left_pixels < right_pixels && right_pixels > 5) { 
+                final_intercepts[0] = x0; final_intercepts[1] = x1; final_intercepts[2] = x2;
+                final_intercepts[3] = x2 + est_grid_w;
 
-                tracked_v_[0].angle = a0;
-                tracked_v_[1].angle = a1;
-                tracked_v_[2].angle = a2;
-                tracked_v_[3].angle = a2;
+                final_angles[0] = a0;
+                final_angles[1] = a1;
+                final_angles[2] = a2;
+                final_angles[3] = a2;
+
+                return true;
+
             }
-            else if (left_pixels < 20 && right_pixels < 20) { // 右侧区域存在网格横线 -> 说明缺失的是右外壁边界
+            else if (left_pixels < 20 && right_pixels < 20) { 
                 float len_l = std::abs(x0 - 0);
                 float len_r = std::abs(x2 - merged_mask_.cols - 1);
-                if (len_l > len_r){
-                    tracked_v_[0].intercept = x0; tracked_v_[1].intercept = x1; tracked_v_[2].intercept = x2;
-                    tracked_v_[3].intercept = x2 + L_grid;
 
-                    tracked_v_[0].angle = a0;
-                    tracked_v_[1].angle = a1;
-                    tracked_v_[2].angle = a2;
-                    tracked_v_[3].angle = a2;
+                if(std::abs(len_l - len_r) < 50) return false; // 三条线占满画面，无法确定是那三条
+
+                if (len_l > len_r){
+                    final_intercepts[0] = x0; final_intercepts[1] = x1; final_intercepts[2] = x2;
+                    final_intercepts[3] = x2 + est_grid_w;
+
+                    final_angles[0] = a0;
+                    final_angles[1] = a1;
+                    final_angles[2] = a2;
+                    final_angles[3] = a2;
                 }
                 else{
-                    tracked_v_[0].intercept = x0 - L_grid;
-                    tracked_v_[1].intercept = x0; tracked_v_[2].intercept = x1; tracked_v_[3].intercept = x2;
+                    final_intercepts[0] = x0 - est_grid_w;
+                    final_intercepts[1] = x0; final_intercepts[2] = x1; final_intercepts[3] = x2;
 
-                    tracked_v_[0].angle = a0;
-                    tracked_v_[1].angle = a0;
-                    tracked_v_[2].angle = a1;
-                    tracked_v_[3].angle = a2;
+                    final_angles[0] = a0;
+                    final_angles[1] = a0;
+                    final_angles[2] = a1;
+                    final_angles[3] = a2;
                 }
+
+                return true;
+
             }
         }
     }
-    // --- 情况 3: 条数 == 2 (依据区域白点密度，精准推导两线在九宫格中的绝对位置) ---
+
     else if (num_v == 2) {
         std::sort(v_candidates.begin(), v_candidates.end(), [](const LineCandidate& a, const LineCandidate& b) {
             return a.intercept < b.intercept;
@@ -724,156 +702,278 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
 
         float g = x1 - x0;
 
-        // if (g > 2.4f * L_grid) { // 跨越了 3 个网格 -> 刚好是左右外壁边界 (0, 3)
-        //     tracked_v_[0].intercept = x0;
-        //     tracked_v_[1].intercept = x0 + L_grid;
-        //     tracked_v_[2].intercept = x0 + 2.0f * L_grid;
-        //     tracked_v_[3].intercept = x1;
-        // } else if (g > 1.4f * L_grid) { // 跨越了 2 个网格 -> 对应 (0, 2) 或 (1, 3)
-        //     int left_pixels = count_mask_pixels(x0 - 0.5f * grid_w, strip_w);
-        //     int right_pixels = count_mask_pixels(x1 + 0.5f * grid_w, strip_w);
+        std::cout << "x_min: " << x_min << " x0: " << x0 << " x1: " << x1 << " x_max: " << x_max << std::endl;
 
-        //     if (left_pixels > right_pixels) { // 左边探测到了网格面 -> 对应 (1, 3)
-        //         tracked_v_[0].intercept = x0 - L_grid;
-        //         tracked_v_[1].intercept = x0;
-        //         tracked_v_[2].intercept = x0 + L_grid;
-        //         tracked_v_[3].intercept = x1;
-        //     } else { // 右边探测到了网格面 -> 对应 (0, 2)
-        //         tracked_v_[0].intercept = x0;
-        //         tracked_v_[1].intercept = x0 + L_grid;
-        //         tracked_v_[2].intercept = x1;
-        //         tracked_v_[3].intercept = x1 + L_grid;
-        //     }
-        // } 
-        // else 
-        // { 
-            // 紧密相邻线 -> 对应 (0, 1) 或 (1, 2) 或 (2, 3)
-            std::cout << "x_min: " << x_min << " x0: " << x0 << " x1: " << x1 << " x_max: " << x_max << std::endl;
+        int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * est_grid_w, strip_w);
+        int right_pixels = count_mask_pixels(x1 + x_max + 0.1f * est_grid_w, strip_w);
 
-            int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * grid_w, strip_w);
-            int right_pixels = count_mask_pixels(x1 + x_max + 0.1f * grid_w, strip_w);
+        std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
 
-            std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
+        if (left_pixels < right_pixels*0.2 && right_pixels > 5) {  
 
-            if (left_pixels < right_pixels*0.2 && right_pixels > 5) { // 左侧几乎是盲区，右侧有网格 -> 说明属于左边缘 (0, 1)
-                tracked_v_[0].intercept = x0;
-                tracked_v_[1].intercept = x1;
-                tracked_v_[2].intercept = x1 + L_grid;
-                tracked_v_[3].intercept = x1 + 2.0f * L_grid;
+            if(x0 <= 200) return false;
 
-                tracked_v_[0].angle = a0;
-                tracked_v_[1].angle = a1;
-                tracked_v_[2].angle = a1;
-                tracked_v_[3].angle = a1;
+            final_intercepts[0] = x0;
+            final_intercepts[1] = x1;
+            final_intercepts[2] = x1 + est_grid_w;
+            final_intercepts[3] = x1 + 2.0f * est_grid_w;
 
-            } else if (left_pixels*0.2 > right_pixels && left_pixels > 5) { // 右侧几乎是盲区，左侧有网格 -> 说明属于右边缘 (2, 3)
-                tracked_v_[0].intercept = x0 - 2.0f * L_grid;
-                tracked_v_[1].intercept = x0 - L_grid;
-                tracked_v_[2].intercept = x0;
-                tracked_v_[3].intercept = x1;
+            final_angles[0] = a0;
+            final_angles[1] = a1;
+            final_angles[2] = a1;
+            final_angles[3] = a1;
 
-                tracked_v_[0].angle = a0;
-                tracked_v_[1].angle = a0;
-                tracked_v_[2].angle = a0;
-                tracked_v_[3].angle = a1;
+            return true;
 
-            } else if (right_pixels > 5 && left_pixels > 5) { // 两边都饱含横线点 -> 说明当前捕捉到的是正中间的骨架 (1, 2)
-                tracked_v_[0].intercept = x0 - L_grid;
-                tracked_v_[1].intercept = x0;
-                tracked_v_[2].intercept = x1;
-                tracked_v_[3].intercept = x1 + L_grid;
+        } else if (left_pixels*0.2 > right_pixels && left_pixels > 5) {  
 
-                tracked_v_[0].angle = a0;
-                tracked_v_[1].angle = a0;
-                tracked_v_[2].angle = a1;
-                tracked_v_[3].angle = a1;
+            if(x1 > mask.cols - 200) return false;
+
+            final_intercepts[0] = x0 - 2.0f * est_grid_w;
+            final_intercepts[1] = x0 - est_grid_w;
+            final_intercepts[2] = x0;
+            final_intercepts[3] = x1;
+
+            final_angles[0] = a0;
+            final_angles[1] = a0;
+            final_angles[2] = a0;
+            final_angles[3] = a1;
+
+            return true;
+
+        } else if (right_pixels > 5 && left_pixels > 5) {  
+            final_intercepts[0] = x0 - est_grid_w;
+            final_intercepts[1] = x0;
+            final_intercepts[2] = x1;
+            final_intercepts[3] = x1 + est_grid_w;
+
+            final_angles[0] = a0;
+            final_angles[1] = a0;
+            final_angles[2] = a1;
+            final_angles[3] = a1;
+
+            return true;
+
+        } else {
+            float len_l = std::abs(x0 - 0);
+            float len_r = std::abs(x1 - merged_mask_.cols - 1);
+
+            if(std::abs(len_l - len_r) < 50) return false; // 两条线占满画面，无法确定是那两条
+
+            if (len_l < len_r) {
+                final_intercepts[0] = x0 - 2.0f * est_grid_w;
+                final_intercepts[1] = x0 - est_grid_w;
+                final_intercepts[2] = x0;
+                final_intercepts[3] = x1;
+
+                final_angles[0] = a0;
+                final_angles[1] = a0;
+                final_angles[2] = a0;
+                final_angles[3] = a1;
 
             } else {
-                float len_l = std::abs(x0 - 0);
-                float len_r = std::abs(x1 - merged_mask_.cols - 1);
-                if (len_l < len_r) {
-                    tracked_v_[0].intercept = x0 - 2.0f * L_grid;
-                    tracked_v_[1].intercept = x0 - L_grid;
-                    tracked_v_[2].intercept = x0;
-                    tracked_v_[3].intercept = x1;
+                final_intercepts[0] = x0;
+                final_intercepts[1] = x1;
+                final_intercepts[2] = x1 + est_grid_w;
+                final_intercepts[3] = x1 + 2.0f * est_grid_w;
 
-                    tracked_v_[0].angle = a0;
-                    tracked_v_[1].angle = a0;
-                    tracked_v_[2].angle = a0;
-                    tracked_v_[3].angle = a1;
+                final_angles[0] = a0;
+                final_angles[1] = a1;
+                final_angles[2] = a1;
+                final_angles[3] = a1;
+            }
 
-                } else {
-                    tracked_v_[0].intercept = x0;
-                    tracked_v_[1].intercept = x1;
-                    tracked_v_[2].intercept = x1 + L_grid;
-                    tracked_v_[3].intercept = x1 + 2.0f * L_grid;
+            return true;
 
-                    tracked_v_[0].angle = a0;
-                    tracked_v_[1].angle = a1;
-                    tracked_v_[2].angle = a1;
-                    tracked_v_[3].angle = a1;
+        }
+    }
+    else {
+        std::cout << "检测出的竖线条数: " << num_v << std::endl;
+        return false;
+    }
+
+}
+
+void TRTNode::trackSingleDirection(std::vector<LineCandidate>& candidates, std::vector<TrackedLine>& tracked_lines) 
+{
+    std::vector<bool> det_matched(candidates.size(), false);
+    std::vector<int> track_to_det(4, -1);
+    int match_count = 0;  
+
+    // 1. 基础数据关联（贪心匹配）
+    for (int k = 0; k < 4; ++k) {
+        int best_idx = -1;
+        float min_dist = 150.0f;  
+        for (size_t i = 0; i < candidates.size(); ++i) {
+            if (det_matched[i]) continue;
+            float dist = std::abs(candidates[i].intercept - tracked_lines[k].intercept);
+            if (dist < min_dist) { min_dist = dist; best_idx = i; }
+        }
+        if (best_idx != -1) {
+            track_to_det[k] = best_idx;
+            det_matched[best_idx] = true;
+            match_count++;
+        }
+    }
+
+    // 2. 核心改进：通过已匹配的线估计缩放比例(a)与平移(b)
+    float scale_a = 1.0f;
+    float shift_b = 0.0f;
+
+    if (match_count >= 2) {
+        // 利用最小二乘法拟合 y = a*x + b
+        float sum_x = 0, sum_y = 0, sum_xx = 0, sum_xy = 0;
+        for (int k = 0; k < 4; ++k) {
+            if (track_to_det[k] != -1) {
+                float x = tracked_lines[k].intercept;                  // 历史截距
+                float y = candidates[track_to_det[k]].intercept;       // 当前检测截距
+                sum_x += x;
+                sum_y += y;
+                sum_xx += x * x;
+                sum_xy += x * y;
+            }
+        }
+        
+        float denominator = match_count * sum_xx - sum_x * sum_x;
+        if (std::abs(denominator) > 1e-3f) {
+            scale_a = (match_count * sum_xy - sum_x * sum_y) / denominator;
+            shift_b = (sum_y - scale_a * sum_x) / match_count;
+
+            // 阻尼与安全保护：单帧间的缩放和突变不可能太离谱（设定安全阈值：0.8 ~ 1.25）
+            if (scale_a < 0.8f || scale_a > 1.2f) {
+                std::cout << "\033[1;33m[WARN] 估计的缩放率异常 (" << scale_a << ")，退化为纯平移模型\033[0m" << std::endl;
+                scale_a = 1.0f;
+                float total_shift = 0;
+                for (int k = 0; k < 4; ++k) {
+                    if (track_to_det[k] != -1) {
+                        total_shift += (candidates[track_to_det[k]].intercept - tracked_lines[k].intercept);
+                    }
+                }
+                shift_b = total_shift / match_count;
+            }
+        } else {
+            // 分母过小说明匹配到的几条线截距几乎重合（异常情况），退化为均值平移
+            scale_a = 1.0f;
+            float total_shift = 0;
+            for (int k = 0; k < 4; ++k) {
+                if (track_to_det[k] != -1) total_shift += (candidates[track_to_det[k]].intercept - tracked_lines[k].intercept);
+            }
+            shift_b = total_shift / match_count;
+        }
+    } 
+    else if (match_count == 1) {
+        // 如果极其不幸只剩 1 条线匹配上了，无法估算缩放，只能退化为纯平移
+        scale_a = 1.0f;
+        for (int k = 0; k < 4; ++k) {
+            if (track_to_det[k] != -1) {
+                shift_b = candidates[track_to_det[k]].intercept - tracked_lines[k].intercept;
+                break;
+            }
+        }
+    } 
+    else {
+        // 0 条线匹配：完全盲跑，保持原样不动
+        scale_a = 1.0f;
+        shift_b = 0.0f;
+    }
+
+    // 打印当前帧估算出来的运动趋势
+    if (match_count >= 2) {
+        std::cout << "\033[1;36m[MOTION ESTIMATE] 匹配线数: " << match_count 
+                  << " | 缩放系数(a): " << scale_a 
+                  << " (" << (scale_a > 1.0f ? "网格扩大/靠近" : "网格缩小/远离") << ")"
+                  << " | 偏移基准(b): " << shift_b << "\033[0m" << std::endl;
+    }
+
+    // 3. 更新与时序外推预测
+    for (int k = 0; k < 4; ++k) {
+        if (track_to_det[k] == -1) {
+            // 对于当前看不见的线，利用科学的线性缩放模型预测它的新位置！
+            tracked_lines[k].intercept = scale_a * tracked_lines[k].intercept + shift_b;
+            tracked_lines[k].is_visible = false;
+        } else {
+            // 对于看得见的线，直接用实测值强制更新，防止漂移
+            int idx = track_to_det[k];
+            tracked_lines[k].intercept = candidates[idx].intercept;
+            tracked_lines[k].angle = candidates[idx].angle;
+            tracked_lines[k].is_visible = true;
+        }
+    }
+}
+
+
+
+std::vector<Unet::Quad2D>  TRTNode::trackGridAndGetNodes(std::vector<LineCandidate>& v_candidates, 
+                                    const float& est_grid_w, 
+                                    const cv::Mat& current_frame,
+                                    const cv::Mat& mask)
+{
+    std::vector<float> final_v_intercepts, final_v_angles;
+    final_v_intercepts.resize(4, 0.0f);
+    final_v_angles.resize(4, 0.0f);
+    bool v_ok = reconstructGridLines(v_candidates, W_, est_grid_w, mask, final_v_intercepts, final_v_angles);
+
+    bool global_correction_applied = false;
+
+    if(v_ok){
+        global_correction_applied = true;
+        for (int i = 0; i < 4; ++i) {
+            tracked_v_[i] = {i, final_v_intercepts[i], final_v_angles[i], true};
+        }
+        if (!grid_initialized_) {
+            grid_initialized_ = true;
+            std::cout << "\033[1;32m>>> [INIT SUCCESS] Grid Slots Initialized Successfully via Reasonable Geometry! <<<\033[0m" << std::endl;
+        } else {
+            std::cout << "\033[1;36m>>> [DYNAMIC CALIBRATION] Tracked slots corrected successfully via global reconstruction. <<<\033[0m" << std::endl;
+        }
+    }
+
+    // 如果系统至今连一次完美的初始化都没成功过，且本帧重建也失败/不合理，直接退场，不盲画交点
+    if (!grid_initialized_) {
+        std::cout << "\n一次初始化都没有成功\n" << std::endl;
+        return {};
+    }
+
+    // 没有应用全局矫正，进行跟踪
+    if (!global_correction_applied) {
+        trackSingleDirection(v_candidates, tracked_v_);
+    }
+
+    if (grid_initialized_) {
+        std::vector<float> visible_gaps;
+        for (int i = 0; i < 4; ++i) {
+            for (int j = i + 1; j < 4; ++j) {
+                if (tracked_h_[i].is_visible && tracked_h_[j].is_visible) {
+                    visible_gaps.push_back(std::abs(tracked_h_[i].intercept - tracked_h_[j].intercept) / (j - i));
+                }
+                if (tracked_v_[i].is_visible && tracked_v_[j].is_visible) {
+                    visible_gaps.push_back(std::abs(tracked_v_[i].intercept - tracked_v_[j].intercept) / (j - i));
                 }
             }
-        // }
-    }
-    // --- 情况 4: 条数 == 1 (结合 4 个潜在位置的特征投票，完美给单线归位) ---
-    else if (num_v == 1) {
-        float x0 = v_candidates[0].intercept;
-        float a0 = v_candidates[0].angle;
-        
-        // 分别向左、向右外延四个半格子区间进行精准探针计数
-        int L2 = count_mask_pixels(x0 - 1.5f * grid_w, strip_w);
-        int L1 = count_mask_pixels(x0 - 0.5f * grid_w, strip_w);
-        int R1 = count_mask_pixels(x0 + 0.5f * grid_w, strip_w);
-        int R2 = count_mask_pixels(x0 + 1.5f * grid_w, strip_w);
-
-        int matched_slot = 1; // 默认中左 1 号位
-
-        if (L1 + L2 < (R1 + R2) * 0.5f) {
-            matched_slot = 0; // 左边空空如也，全部能量堆在右边 -> 这是 0 号左外边界线
-        } else if (R1 + R2 < (L1 + L2) * 0.5f) {
-            matched_slot = 3; // 右边空空如也，全部能量堆在左边 -> 这是 3 号右外边界线
-        } else if (R2 < L2) {
-            matched_slot = 2; // 两边都有，但左边延展更长 -> 判定为 2 号中右内部线
-        } else {
-            matched_slot = 1; // 两边都有，但右边延展更长 -> 判定为 1 号中左内部线
         }
+        if (!visible_gaps.empty()) {
+            float sum_gap = 0;
+            for (float g : visible_gaps) sum_gap += g;
+            float current_measured_grid = sum_gap / visible_gaps.size();
 
-        for (int i = 0; i < 4; ++i) {
-            tracked_v_[i].intercept = x0 + (i - matched_slot) * L_grid;
-            tracked_v_[i].angle = a0;
-        }
-    }
-    // --- 情况 5: 极端大面积全遮挡兜底 (0 条竖线) ---
-    else {
-        float center_u = W_ * 0.5f;
-        for (int i = 0; i < 4; ++i) {
-            tracked_v_[i].intercept = center_u + (i - 1.5f) * L_grid;
-            tracked_v_[i].angle = 1.57;
+            if (tracked_grid_size_ > 0) {
+                last_scale_a_ = current_measured_grid / tracked_grid_size_;
+                if (last_scale_a_ < 0.8f || last_scale_a_ > 1.25f) last_scale_a_ = 1.0f;
+            }
+            tracked_grid_size_ = current_measured_grid;
+        } 
+        else {
+            last_scale_a_ = 1.0f;
         }
     }
 
-    // 刷新全 4 根竖线的方向与生存标识
-    for (int i = 0; i < 4; ++i) {
-        // tracked_v_[i].angle = avg_v_angle;
-        std::cout << "tracked_v_[" << i << "].intercept: " << tracked_v_[i].intercept << std::endl;
-        tracked_v_[i].is_visible = true; 
-    }
-
-    // ==================== 【3. 构建输出九宫格 quads_】 ====================
     computeGridQuads(640, 480, 960, 720);
 
-// ==================== 可视化调试 ====================
-    cv::resize(frame, canvas_, cv::Size(W_, H_), 0, 0, cv::INTER_LINEAR);
-    // 1. 在 canvas_ 上绘制 ideal_h_v 对应的绿色横线
-    for (int s = 0; s < 4; ++s) {
-        float ideal_v = ideal_h_v[s];
-        cv::line(canvas_, cv::Point(0, (int)ideal_v), cv::Point(W_, (int)ideal_v), cv::Scalar(0, 255, 0), 1);
-    }
+    cv::resize(current_frame, canvas_, cv::Size(W_, H_), 0, 0, cv::INTER_LINEAR);
 
-    cv::Mat frame_src = frame.clone();
-    cv::Mat frame_src_first= frame.clone();
-    cv::Mat mask = merged_mask_.clone();
+    cv::Mat frame_src = current_frame.clone();
+    cv::Mat frame_src_first= current_frame.clone();
+
 
     // 3. 在 canvas_ 上绘制 quads_ 中的顶点
     for (const auto& quad : quads_) {
@@ -887,25 +987,61 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
     }
 
     // 可选：显示当前深度信息
-    std::string depth_str = "Depth: " + std::to_string(grid_depth_) + " mm";
-    cv::putText(canvas_, depth_str, cv::Point(20, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2);
+    std::string depth_str = "est_grid_w: " + std::to_string(test_grid_size_) + " mm";
+    cv::putText(frame_src, depth_str, cv::Point(200, 30), cv::FONT_HERSHEY_SIMPLEX, 0.8, cv::Scalar(0, 255, 255), 2);
+
+    int status_y = 30; // 初始Y坐标
+    std::vector<std::pair<std::string, bool>> status_list = {
+        {"v_ok", v_ok},
+        {"global_correction_applied", global_correction_applied},
+        {"grid_initialized_", grid_initialized_}
+    };
+
+    for (const auto& item : status_list) {
+        std::string status_str = item.first + ": " + (item.second ? "true" : "false");
+        // 根据真假自适应颜色：真用青绿(Cyan)，假用亮红
+        cv::Scalar text_color = item.second ? cv::Scalar(255, 255, 0) : cv::Scalar(0, 0, 255); 
+        
+        // 1. 绘制黑色阴影层（厚度为2，稍微偏移，增强复杂背景下的鲁棒可见度）
+        cv::putText(frame_src, status_str, cv::Point(16, status_y + 1), cv::FONT_HERSHEY_SIMPLEX, 0.6, cv::Scalar(0, 0, 0), 2);
+        // 2. 绘制彩色前景层
+        cv::putText(frame_src, status_str, cv::Point(15, status_y), cv::FONT_HERSHEY_SIMPLEX, 0.6, text_color, 2);
+        
+        status_y += 25; // 换行下移
+    }
 
     // ==================== 新增：在 frame_src 绘制 tracked_h_ 信息并保存 ====================
-    int text_y = 30; // 初始写入的Y坐标
-    for (int i = 0; i < tracked_h_.size(); ++i) {
-        // 弧度转角度，更直观
-        float angle_deg = tracked_h_[i].angle * 180.0f / 3.1415926f;
+    int text_y = 130; // 初始写入的Y坐标
+    for (int i = 0; i < tracked_v_.size(); ++i) {
         
         // 格式化当前横线的信息字符串
-        std::string info_str = "H[" + std::to_string(i) + 
-                               "]: Intercept=" + std::to_string(static_cast<int>(tracked_h_[i].intercept)) + 
-                               ", Angle=" + std::to_string(angle_deg).substr(0, 5) + " deg";
+        std::string info_str = "V[" + std::to_string(i) + 
+                               "]: Intercept=" + std::to_string(static_cast<int>(tracked_v_[i].intercept));
         
         // 绘制一层黑色阴影避免白背景导致看不清
         cv::putText(frame_src, info_str, cv::Point(11, text_y + 1), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1);
         // 绘制绿色的文本文字
         cv::putText(frame_src, info_str, cv::Point(10, text_y), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 255, 0), 1);
         text_y += 25; // 换行下移
+    }
+
+    int text_y_2 = 250;
+    for (int i = 0; i < tracked_h_.size(); ++i) {
+
+        int ideal_v = static_cast<int>(tracked_h_[i].intercept / 1.5);
+        cv::line(frame_src, cv::Point(0, ideal_v), cv::Point(W_, ideal_v), cv::Scalar(0, 255, 0), 1);
+        
+        // 格式化当前横线的信息字符串
+        std::string info_str = "H[" + std::to_string(i) + 
+                               "]: Intercept=" + std::to_string(static_cast<int>(tracked_h_[i].intercept)) +
+                                " | " + std::to_string(ideal_v);
+
+        cv::Scalar text_color = tracked_h_[i].is_visible ? cv::Scalar(0, 255, 0) : cv::Scalar(0, 0, 255);
+        // 绘制一层黑色阴影避免白背景导致看不清
+        cv::putText(frame_src, info_str, cv::Point(11, text_y_2 + 1), cv::FONT_HERSHEY_SIMPLEX, 0.5, cv::Scalar(0, 0, 0), 1);
+        // 绘制绿色的文本文字
+        cv::putText(frame_src, info_str, cv::Point(10, text_y_2), cv::FONT_HERSHEY_SIMPLEX, 0.5, text_color, 1);
+        text_y_2 += 25; // 换行下移
     }
 
     // 自动按帧序列号保存至指定路径

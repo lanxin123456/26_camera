@@ -787,13 +787,18 @@ void D455Node::process_unet_Loop()
         float pos_z{910.0};
         { 
             std::unique_lock<std::mutex> lock(mut_pos_);
-            pos_z = lidar_z_ + 400 + 431 + 80;
-            pos_z += 200;
+            // pos_z = lidar_z_ + 400 + 431 + 80;
+            pos_z = 0 + 400 + 431 + 80;
+            pos_z += 0;
             if(d455_log_.is_open()) d455_log_  << " pos_z: " << pos_z << endl;
         } 
 
         std::vector<Unet::Quad2D> quads = trt_seg_->getgridquads(img, pos_z); //--4ms
         
+        if(quads.empty()){
+            cout << "没有匹配出九宫格" << endl;
+            continue;
+        }
         distances_ = fitPixelScale(quads);
 
         QuadsData new_data;

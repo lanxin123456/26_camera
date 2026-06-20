@@ -163,6 +163,20 @@ private:
 
     void filterLinesByGridConsistency(std::vector<LineCandidate>& candidates, float est_grid_w, cv::Mat& mask_to_clear);
 
+    std::vector<Unet::Quad2D>  trackGridAndGetNodes(std::vector<LineCandidate>& v_candidates, 
+                                    const float& est_grid_w, 
+                                    const cv::Mat& current_frame,
+                                    const cv::Mat& mask);
+    
+    bool reconstructGridLines(std::vector<LineCandidate>& v_candidates, 
+                                    int max_dim, 
+                                    const float& est_grid_w, 
+                                    const cv::Mat& mask,
+                                    std::vector<float>& final_intercepts, 
+                                    std::vector<float>& final_angles);
+
+    void trackSingleDirection(std::vector<LineCandidate>& candidates, std::vector<TrackedLine>& tracked_lines);
+
     cv::Point2f computeIntersection(const cv::Vec4f& line1, const cv::Vec4f& line2);
     cv::Vec4f slotToVec4f(const TrackedLine& tl, bool is_vertical);
     void computeGridQuads(int src_w, int src_h, int net_w, int net_h);
@@ -181,6 +195,14 @@ private:
     std::vector<SimLine> sim_h_slots_{4}; // 对应 3D 里的 5,6,7,8 号线投影
 
     bool test_{false};
+    bool grid_initialized_{false};
+
+    float tracked_grid_size_;
+    float test_grid_size_;
+
+    float last_scale_a_;
+    float ideal_h_v_[4];
+
     int frame_idx_ = 0;
     
     int W_ = 0;
