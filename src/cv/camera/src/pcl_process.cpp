@@ -115,7 +115,7 @@ float Pclprocess::PlaneSegmentation(pPointCloud& cloud_in, pPointCloud& cloud_ou
     vg.setInputCloud (cloud_in);
     vg.setLeafSize (voxel_size, voxel_size, voxel_size);
     vg.filter (*cloud_filtered);
-    // //std::cout << "体素滤波前点数： " << cloud_in->points.size() << "  体素滤波后cloud_filtered: " << cloud_filtered->points.size() <<endl;
+    // std::cout << "体素滤波前点数： " << cloud_in->points.size() << "  体素滤波后cloud_filtered: " << cloud_filtered->points.size() <<endl;
     pcl::SACSegmentation<pcl::PointXYZ> seg;
     pcl::PointIndices::Ptr inliers(new pcl::PointIndices);
     pcl::ModelCoefficients::Ptr coefficients(new pcl::ModelCoefficients);
@@ -146,12 +146,24 @@ float Pclprocess::PlaneSegmentation(pPointCloud& cloud_in, pPointCloud& cloud_ou
     float D = coefficients->values[3];
 
     float norm = std::sqrt(A * A + B * B + C * C);
+
+    // 2. 计算法向量与Z轴夹角的余弦值（取绝对值可以保证求出的是 0~90 度的锐角/直角）
+    float cos_theta = std::abs(C) / norm;
+    // 3. 限制 cos 值在 [-1.0, 1.0] 范围内，防止由于浮点数精度问题导致 acos 返回 NaN
+    cos_theta = std::max(-1.0f, std::min(1.0f, cos_theta));
+    float angle_to_z_rad = std::acos(cos_theta);
+    float angle_to_z_deg = angle_to_z_rad * 180.0f / M_PI;
+
+    // std::cout << "点云平面与Z轴的夹角: " << angle_to_z_deg << " 度" << std::endl;
+
     float distance_mm = std::abs(D) / norm;
 
     //法向量(A,B,C)与XZ平面的夹角a = arcsin(|B|/sqrt{A^2 + B^2 + C^2})
-    float angle_rad = std::asin(std::abs(B) / norm);
-    float angle_deg = angle_rad * 180.0f / M_PI;
-    if (angle_deg > 8.0f)
+    // float angle_rad = std::asin(std::abs(B) / norm);
+    // float angle_deg = angle_rad * 180.0f / M_PI;
+
+    // std::cout << "kfs角度: " << angle_deg << std::endl;
+    if (angle_to_z_deg > 10.0f)
     {
         if (!cloud_out->points.empty())
         {
@@ -161,14 +173,14 @@ float Pclprocess::PlaneSegmentation(pPointCloud& cloud_in, pPointCloud& cloud_ou
                 sum_z += pt.z;
             }
             distance_mm = static_cast<float>(sum_z / cloud_out->points.size());
-            // std::cout << "夹角大于8度: " << distance_mm << std::endl;
+            // std::cout << "夹角大于10度: " << distance_mm << std::endl;
         }
         else
         {
             distance_mm = 0.0f; 
         }
     }
-    // std::cout << "\n\n\n\n" << A << " " << B << " " << C << " " << D << "\n\n\n\n";
+    // std::cout << A << " " << B << " " << C << " " << D << "\n\n\n\n";
     return distance_mm;
 }
 

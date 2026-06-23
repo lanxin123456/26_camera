@@ -233,7 +233,7 @@ private:
     std::vector<QuadsData> quads_buffer_;
     std::mutex buffer_mutex_;
     const size_t max_buffer_size_ = 5;
-    std::vector<Unet::Quad2D> getNearestQuads(std::chrono::steady_clock::time_point target_time);
+    QuadsData getNearestQuads(std::chrono::steady_clock::time_point target_time);
     //-----------------------------
 
 
@@ -310,6 +310,7 @@ private:
     cv::Mat src_unet_;
     cv::Mat src_part2_;
     cv::Mat depth_;
+    cv::Mat depth_unet_;
     cv::Mat depth_part2_;
     cv::Mat disp_;
     cv::Mat latest_depth_state_;
@@ -389,6 +390,10 @@ private:
 
     trt_yolo::YOLOv8Config config_;
     trt_yolo::YOLOv8 *yolo_detector_;
+
+    trt_yolo::YOLOv8Config config_grid_;
+    trt_yolo::YOLOv8 *yolo_detector_grid_;
+
 
     trt_yolo::YOLOv8Config config_part2_;
     trt_yolo::YOLOv8 *trt_yolo_part2_;

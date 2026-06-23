@@ -138,11 +138,11 @@ std::vector<TRTNode::LineCandidate> TRTNode::extractAndClusterLines(
 
         if (line_length < 100) {
             if(test_){
-                std::cout << "\033[1;31m[LINE FILTERED] 剔除不合理短线 -> 方向: " 
-                      << (is_vertical ? "竖线" : "横线") 
-                      << " | 截距: " << final_intercept 
-                      << " | 物理长度: " << line_length 
-                      << " (低于阈值 " << 100 << ")\033[0m" << std::endl;
+                // std::cout << "\033[1;31m[LINE FILTERED] 剔除不合理短线 -> 方向: " 
+                //       << (is_vertical ? "竖线" : "横线") 
+                //       << " | 截距: " << final_intercept 
+                //       << " | 物理长度: " << line_length 
+                //       << " (低于阈值 " << 100 << ")\033[0m" << std::endl;
             }
             for (const auto& pt : merged_points){
                 merged_mask_.at<uchar>(pt) = 0;
@@ -151,7 +151,7 @@ std::vector<TRTNode::LineCandidate> TRTNode::extractAndClusterLines(
         }
         // =====================================================================
 
-        if(is_vertical) std::cout << "竖线宽度：" << max_w - min_w << std::endl;
+        // if(is_vertical) std::cout << "竖线宽度：" << max_w - min_w << std::endl;
 
         // if (max_w - min_w < 5) continue;
         final_candidates.push_back({merged_points, final_intercept, final_angle, min_w, max_w});
@@ -301,7 +301,7 @@ void TRTNode::detect(const cv::Mat& frame)
 
 void TRTNode::filterLinesByGridConsistency(std::vector<LineCandidate>& candidates, float est_grid_w, cv::Mat& mask_to_clear) 
 {
-    std::cout << "\ncandidates.size(): " << candidates.size() << " est_grid_w: " << est_grid_w << std::endl;
+    // std::cout << "\ncandidates.size(): " << candidates.size() << " est_grid_w: " << est_grid_w << std::endl;
     if (candidates.size() < 3) return; // 小于3条线无法通过相对间距判定
 
     std::sort(candidates.begin(), candidates.end(), [](const LineCandidate& a, const LineCandidate& b) {
@@ -381,7 +381,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
 
     cv::imshow("merged_mask_src", merged_mask_);
     
-    std::cout << "原始竖线条数: " << v_candidates.size() << " 原始横线条数: " << h_candidates.size() << std::endl;
+    // std::cout << "原始竖线条数: " << v_candidates.size() << " 原始横线条数: " << h_candidates.size() << std::endl;
     // ==================== 【0. 新增：计算 best_d 前，基于现有线自适应估算格子像素宽度】 ====================
     float est_grid_w = tracked_grid_size_;
     {
@@ -394,7 +394,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             for (size_t i = 0; i < x_vals.size(); ++i) {
                 for (size_t j = i + 1; j < x_vals.size(); ++j) {
                     float d = x_vals[j] - x_vals[i];
-                    std::cout << "竖线相互间隔 (线" << i << " -> 线" << j << ")：" << d << std::endl;
+                    // std::cout << "竖线相互间隔 (线" << i << " -> 线" << j << ")：" << d << std::endl;
                     if (d > 30.0f && d < 700.0f) {
                         diffs.push_back(d);
                     }
@@ -408,7 +408,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             for (size_t i = 0; i < y_vals.size(); ++i) {
                 for (size_t j = i + 1; j < y_vals.size(); ++j) {
                     float d = y_vals[j] - y_vals[i];
-                    std::cout << "横线相互间隔 (线" << i << " -> 线" << j << ")：" << d << std::endl;
+                    // std::cout << "横线相互间隔 (线" << i << " -> 线" << j << ")：" << d << std::endl;
                     if (d > 30.0f && d < 700.0f) {
                         diffs.push_back(d);
                     }
@@ -447,8 +447,8 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
                 sum += val;
             }
             est_grid_w = sum / clusters[best_cluster_idx].size();
-            std::cout << "\033[1;32m[GRID CLUSTER] 聚类成功 -> 独立簇数: " << clusters.size() 
-                        << " | 最大簇样本数: " << max_size << "\033[0m" << std::endl;
+            // std::cout << "\033[1;32m[GRID CLUSTER] 聚类成功 -> 独立簇数: " << clusters.size() 
+            //             << " | 最大簇样本数: " << max_size << "\033[0m" << std::endl;
         } 
         else if (!diffs.empty()) {
             // 【兜底】如果收集到的间距少于 3 个，无法聚类，直接退化为最稳健的中位数
@@ -457,7 +457,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         }
     }
     //至少在一个方向上有两个线时， est_grid_w != 0
-    std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
+    // std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
     test_grid_size_ = est_grid_w;
 
 
@@ -485,7 +485,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         
     } else {
         if (test_) {
-            std::cout << "[解析深度估计] 未提取到有效单格像素宽度，启用默认兜底 best_d: " << best_d << " mm" << std::endl;
+            // std::cout << "[解析深度估计] 未提取到有效单格像素宽度，启用默认兜底 best_d: " << best_d << " mm" << std::endl;
         }
     }
     // std::cout << "best_d: " << best_d << " pos_z: " << pos_z << std::endl;
@@ -598,7 +598,7 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
 
         float g1 = x1 - x0; float g2 = x2 - x1;
 
-        std::cout << "g1: " << g1 << " g2: " << g2 << " est_grid_w: " << est_grid_w << std::endl;
+        // std::cout << "g1: " << g1 << " g2: " << g2 << " est_grid_w: " << est_grid_w << std::endl;
         if (g1 > 1.45f * est_grid_w) { // 槽位 1 缺失 (断开的是左间距)
             final_intercepts[0] = x0;
             final_intercepts[1] = x0 + est_grid_w;
@@ -626,12 +626,12 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
             return true;
             
         } else {  
-            std::cout << "left_x: " << x0 + x_min - 0.2f * est_grid_w << " right_x: " << x2 + x_max + 0.2f * est_grid_w << " strip_w: " << strip_w << std::endl;
+            // std::cout << "left_x: " << x0 + x_min - 0.2f * est_grid_w << " right_x: " << x2 + x_max + 0.2f * est_grid_w << " strip_w: " << strip_w << std::endl;
 
             int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * est_grid_w, strip_w);
             int right_pixels = count_mask_pixels(x2 + x_max + 0.1f * est_grid_w, strip_w);
 
-            std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
+            // std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
             if (left_pixels > right_pixels && left_pixels > 5) { 
                 final_intercepts[0] = x0 - est_grid_w;
                 final_intercepts[1] = x0; final_intercepts[2] = x1; final_intercepts[3] = x2;
@@ -702,12 +702,12 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
 
         float g = x1 - x0;
 
-        std::cout << "x_min: " << x_min << " x0: " << x0 << " x1: " << x1 << " x_max: " << x_max << std::endl;
+        // std::cout << "x_min: " << x_min << " x0: " << x0 << " x1: " << x1 << " x_max: " << x_max << std::endl;
 
         int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * est_grid_w, strip_w);
         int right_pixels = count_mask_pixels(x1 + x_max + 0.1f * est_grid_w, strip_w);
 
-        std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
+        // std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
 
         if (left_pixels < right_pixels*0.2 && right_pixels > 5) {  
 
@@ -788,7 +788,7 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
         }
     }
     else {
-        std::cout << "检测出的竖线条数: " << num_v << std::endl;
+        // std::cout << "检测出的竖线条数: " << num_v << std::endl;
         return false;
     }
 
@@ -841,7 +841,7 @@ void TRTNode::trackSingleDirection(std::vector<LineCandidate>& candidates, std::
 
             // 阻尼与安全保护：单帧间的缩放和突变不可能太离谱（设定安全阈值：0.8 ~ 1.25）
             if (scale_a < 0.8f || scale_a > 1.2f) {
-                std::cout << "\033[1;33m[WARN] 估计的缩放率异常 (" << scale_a << ")，退化为纯平移模型\033[0m" << std::endl;
+                // std::cout << "\033[1;33m[WARN] 估计的缩放率异常 (" << scale_a << ")，退化为纯平移模型\033[0m" << std::endl;
                 scale_a = 1.0f;
                 float total_shift = 0;
                 for (int k = 0; k < 4; ++k) {
@@ -879,10 +879,10 @@ void TRTNode::trackSingleDirection(std::vector<LineCandidate>& candidates, std::
 
     // 打印当前帧估算出来的运动趋势
     if (match_count >= 2) {
-        std::cout << "\033[1;36m[MOTION ESTIMATE] 匹配线数: " << match_count 
-                  << " | 缩放系数(a): " << scale_a 
-                  << " (" << (scale_a > 1.0f ? "网格扩大/靠近" : "网格缩小/远离") << ")"
-                  << " | 偏移基准(b): " << shift_b << "\033[0m" << std::endl;
+        // std::cout << "\033[1;36m[MOTION ESTIMATE] 匹配线数: " << match_count 
+        //           << " | 缩放系数(a): " << scale_a 
+        //           << " (" << (scale_a > 1.0f ? "网格扩大/靠近" : "网格缩小/远离") << ")"
+        //           << " | 偏移基准(b): " << shift_b << "\033[0m" << std::endl;
     }
 
     // 3. 更新与时序外推预测
@@ -922,15 +922,15 @@ std::vector<Unet::Quad2D>  TRTNode::trackGridAndGetNodes(std::vector<LineCandida
         }
         if (!grid_initialized_) {
             grid_initialized_ = true;
-            std::cout << "\033[1;32m>>> [INIT SUCCESS] Grid Slots Initialized Successfully via Reasonable Geometry! <<<\033[0m" << std::endl;
+            // std::cout << "\033[1;32m>>> [INIT SUCCESS] Grid Slots Initialized Successfully via Reasonable Geometry! <<<\033[0m" << std::endl;
         } else {
-            std::cout << "\033[1;36m>>> [DYNAMIC CALIBRATION] Tracked slots corrected successfully via global reconstruction. <<<\033[0m" << std::endl;
+            // std::cout << "\033[1;36m>>> [DYNAMIC CALIBRATION] Tracked slots corrected successfully via global reconstruction. <<<\033[0m" << std::endl;
         }
     }
 
     // 如果系统至今连一次完美的初始化都没成功过，且本帧重建也失败/不合理，直接退场，不盲画交点
     if (!grid_initialized_) {
-        std::cout << "\n一次初始化都没有成功\n" << std::endl;
+        // std::cout << "\n一次初始化都没有成功\n" << std::endl;
         return {};
     }
 
