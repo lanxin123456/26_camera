@@ -46,7 +46,7 @@ std::vector<TRTNode::LineCandidate> TRTNode::extractAndClusterLines(
     for (int i = 1; i < num_components; i++) {
         if (stats.at<int>(i, cv::CC_STAT_AREA) < 400) continue;
 
-        cv::Mat component_mask = (labels == i);
+        cv::Mat component_mask = (labels == i);//重载为 “逐元素比较操作符”
         merged_mask_.setTo(255, component_mask);
 
         std::vector<cv::Point> points;

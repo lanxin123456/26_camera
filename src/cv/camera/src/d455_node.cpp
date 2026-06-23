@@ -85,7 +85,7 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 	align_ = std::make_shared<Align>();
     pick_ = std::make_shared<Pick>();
     kfs_ = std::make_shared<KFS>();
-    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_619/best_619.engine");
+    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_620_2/best_621.engine");
 
 
     sub_start_test_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
@@ -354,7 +354,7 @@ float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthim
     
 	srcCloud = d455_->PointCloudGenerateRect(roiRect,depthimg,2,1);
 	
-    // cout << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << endl;
+    cout << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << endl;
 
 	if (srcCloud->points.size() < 500) 
 	{
@@ -541,7 +541,7 @@ void D455Node::captureLoop()
                 std::unique_lock<std::mutex> lock(frame_mutex);
                 depth_ = d455_ ->GetDepthImage().clone();
                 src_ = d455_->GetSrcImage().clone();
-                // src_ = cv::imread("grid/frame_01231.jpg");
+                // src_ = cv::imread("grid/frame_02272.jpg");
                 has_frame_ = true;
             } 
             get_frame_.notify_all();
@@ -549,7 +549,7 @@ void D455Node::captureLoop()
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
                 src_unet_ = d455_->GetSrcImage().clone();
-                // src_unet_ = cv::imread("grid/frame_01231.jpg");
+                // src_unet_ = cv::imread("grid/frame_02272.jpg");
                 has_frame_unet_ = true;
             }
             get_frame_unet_.notify_all();
@@ -604,6 +604,7 @@ void D455Node::process_part2_Loop()
         if(trt_yolo_part2_ == nullptr)
         {
             cout << "trt_yolo_part2_指针为空" << endl;
+            continue;
         }
         // cv::imshow("img", img);
         // cv::waitKey(1);
@@ -789,8 +790,8 @@ void D455Node::process_unet_Loop()
             std::unique_lock<std::mutex> lock(mut_pos_);
             // pos_z = lidar_z_ + 400 + 431 + 80;
             pos_z = 0 + 400 + 431 + 80;
-            pos_z += 0;
-            if(d455_log_.is_open()) d455_log_  << " pos_z: " << pos_z << endl;
+            pos_z += 200;
+            // if(d455_log_.is_open()) d455_log_  << " pos_z: " << pos_z << endl;
         } 
 
         std::vector<Unet::Quad2D> quads = trt_seg_->getgridquads(img, pos_z); //--4ms
@@ -1069,9 +1070,81 @@ void D455Node::process_state_Loop()
             }
         }
         // cout << "\n\n" << endl;
-        cv::namedWindow("latest_img_state", cv::WINDOW_NORMAL);
-        cv::imshow("latest_img_state", latest_img_state);
+        // cv::namedWindow("latest_img_state", cv::WINDOW_NORMAL);
+        // cv::imshow("latest_img_state", latest_img_state);
 
+
+
+
+
+
+
+
+        bool grid_look[3][3]; 
+        
+        // 2. 使用 std::fill 将整个连续内存块全部填为 true
+        std::fill(&grid_look[0][0], &grid_look[0][0] + 9, true);
+
+        const int OCCLUSION_PIXEL_THRESH = 600; // 满足遮挡条件的像素点数阈值
+        const float DEPTH_TOLERANCE = 150.0f;   // 区分障碍物与九宫格面板的距离偏差(mm)
+
+        for (size_t i = 0; i < quads.size(); ++i)
+        {
+            const auto& quad = quads[i];
+            if (!quad.valid || quad.pts.empty()) continue;
+
+            int row, col;
+            if(field_ == 0) {
+                row = i / 3;
+                col = i % 3;
+            } else if(field_ == 1) {
+                row = i / 3;
+                col = 2 - i % 3;
+            }
+
+            // 转换坐标格式以使用 OpenCV 的多边形遍历
+            std::vector<cv::Point> pts_cv;
+            for (const auto& pt : quad.pts) {
+                pts_cv.push_back(cv::Point(static_cast<int>(pt.x), static_cast<int>(pt.y)));
+            }
+
+            // 获取当前格子的包围盒，缩小计算范围
+            cv::Rect rect = cv::boundingRect(pts_cv);
+            int x_min = std::max(0, rect.x);
+            int y_min = std::max(0, rect.y);
+            int x_max = std::min(depth.cols - 1, rect.x + rect.width);
+            int y_max = std::min(depth.rows - 1, rect.y + rect.height);
+
+            int occluded_pixels_count = 0;
+
+            for (int y = y_min; y <= y_max; ++y) {
+                for (int x = x_min; x <= x_max; ++x) {
+                    // 判断像素点是否在四边形格子内
+                    if (cv::pointPolygonTest(pts_cv, cv::Point2f(x, y), false) >= 0) {
+                        // 兼容 float 和 uint16_t 的深度图读取
+                        float d_val = (depth.type() == CV_32FC1) ? depth.at<float>(y, x) : static_cast<float>(depth.at<uint16_t>(y, x));
+
+                        // 核心条件：非0 且 显著比九宫格面板更近（即在格子前方有遮挡）
+                        // 提示：如果你坚持用你原本的条件，可以改成：d_val > 10 && d_val < (nine_square_depth_value + 300)
+                        if (d_val > 10 && d_val < (nine_square_depth_value - DEPTH_TOLERANCE)) {
+                            occluded_pixels_count++;
+                        }
+                    }
+                }
+            }
+
+            // if(d455_log_.is_open()) {
+            //     oss << " ||||||||||[格子(" << row << "," << col << ")前方遮挡计数值: " << occluded_pixels_count << "]|||||||||| ";
+            // }
+
+            // 如果格子前方异常近的像素点超过阈值，判定为被遮挡
+            if (occluded_pixels_count > OCCLUSION_PIXEL_THRESH) {
+                grid_look[row][col] = false;
+                if(d455_log_.is_open()) {
+                    oss << " [格子(" << row << "," << col << ")前方检测到遮挡，跳过更新. 计数值: " << occluded_pixels_count << "] ";
+                }
+            }
+        }
 
         bool grid_occupied[3][3] = {{false}};
         for (const auto& obj : objs_kfs_state) // 5ms
@@ -1111,13 +1184,21 @@ void D455Node::process_state_Loop()
                 col = 2 - (matched_grid_id - 1) % 3;
             }
 
+            if (!grid_look[row][col]) 
+            {
+                if(d455_log_.is_open()) {
+                    oss << " 格子【" << row << "," << col << "】跳过更新";
+                }
+                continue;
+            }
+
             if (grid_occupied[row][col]) continue;
             
             float kfs_depth_value = rectangle_depth(obj.rect, depth, oss, row, col);// 1ms
 
             if(kfs_depth_value < 300 || kfs_depth_value > 4000) 
             {
-                grid_state_[row][col] = 0;
+                // grid_state_[row][col] = 0;
                 if(d455_log_.is_open()) oss << " [ERROR: " << matched_grid_id << "号kfs深度: " << kfs_depth_value << "] ";
                 continue;
             }
@@ -1126,11 +1207,11 @@ void D455Node::process_state_Loop()
             {
                 if(d455_log_.is_open()) oss << "  在【" << matched_grid_id << "】号格的kfs深度: " << std::fixed << std::setprecision(1) << kfs_depth_value <<" 未进入 九宫格【" << nine_square_depth_value << "】" ;
                 grid_state_[row][col] = 0;
-                // cout << "  在【" << matched_grid_id << "】号格的kfs深度: " << std::fixed << std::setprecision(1) << kfs_depth_value <<" 未进入 九宫格【" << nine_square_depth_value << "】" << endl;
+                cout << "  在【" << matched_grid_id << "】号格的kfs深度: " << std::fixed << std::setprecision(1) << kfs_depth_value <<" 未进入 九宫格【" << nine_square_depth_value << "】" << endl;
                 continue;
             }
             if(d455_log_.is_open()) oss << " " << matched_grid_id << " 号格的kfs" << "深度 " << std::fixed << std::setprecision(1) << kfs_depth_value;
-            // cout << " " << matched_grid_id << " 号格的kfs" << "深度 " << std::fixed << std::setprecision(1) << kfs_depth_value << endl;;
+            // cout << " " << matched_grid_id << " 号格的kfs" << "深度 " << std::fixed << std::setprecision(1) << kfs_depth_value << endl;
 
             if (obj.label == 0 || obj.label == 1) grid_state_[row][col] = 1;
             else if (obj.label == 2 || obj.label == 3) grid_state_[row][col] = 2;
@@ -1152,6 +1233,21 @@ void D455Node::process_state_Loop()
             {
                 continue;
             }
+
+            int row, col;
+            if(field_ == 0)
+            {
+                row = i / 3;
+                col = i % 3;
+            }
+            else if(field_ == 1)
+            {
+                row = i / 3;
+                col = 2 - i % 3;
+            }
+
+            if (!grid_look[row][col]) continue;
+
             for (const auto& obj : objs_kfs_state)
             {
                 // bool isInside = (center.x() >= obj.rect.x * 1/1.5) && 
@@ -1172,17 +1268,6 @@ void D455Node::process_state_Loop()
             }          
             if(isCenterOutside)
             {
-                int row, col;
-                if(field_ == 0)
-                {
-                    row = i / 3;
-                    col = i % 3;
-                }
-                else if(field_ == 1)
-                {
-                    row = i / 3;
-                    col = 2 - i % 3;
-                }
                 grid_state_[row][col] = 0;
             }
         }
@@ -1232,6 +1317,14 @@ void D455Node::process_state_Loop()
 	} 
     if(show_test_) cout << "process_state_Loop 线程退出" << endl;
 }
+
+
+
+
+
+
+
+
 
 
 void D455Node::alignLoop() 
