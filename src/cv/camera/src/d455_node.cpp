@@ -561,7 +561,7 @@ void D455Node::captureLoop()
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
                 src_unet_ = d455_->GetSrcImage().clone();
-                // src_unet_ = cv::imread("grid/frame_02272.jpg");
+                src_unet_ = cv::imread("grid/frame_00937.jpg");
                 depth_unet_ = d455_ ->GetDepthImage().clone();
                 has_frame_unet_ = true;
             }
@@ -807,7 +807,7 @@ void D455Node::process_unet_Loop()
             std::unique_lock<std::mutex> lock(mut_pos_);
             // pos_z = lidar_z_ + 400 + 431 + 80;
             pos_z = 0 + 400 + 431 + 80;
-            pos_z += 200;
+            pos_z += 0;
             // if(d455_log_.is_open()) d455_log_  << " pos_z: " << pos_z << endl;
         } 
 
