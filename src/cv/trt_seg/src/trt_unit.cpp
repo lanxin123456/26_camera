@@ -314,7 +314,7 @@ void TRTNode::filterLinesByGridConsistency(std::vector<LineCandidate>& candidate
     for (size_t i = 0; i < candidates.size(); ++i) {
         int valid_gaps = 0;
         int invalid_gaps = 0;
-        std::cout << candidates[i].intercept << std::endl;
+        // std::cout << candidates[i].intercept << std::endl;
         for (size_t j = 0; j < candidates.size(); ++j) {
             if (i == j) continue;
             float dist = std::abs(candidates[i].intercept - candidates[j].intercept);
@@ -322,7 +322,7 @@ void TRTNode::filterLinesByGridConsistency(std::vector<LineCandidate>& candidate
             float ratio = dist / est_grid_w;
             float closest_multiple = std::round(ratio);
             
-            if(i == 0) std::cout << "dist: " << dist << " ratio: " << ratio << " closest_multiple: " << closest_multiple << std::endl;
+            // if(i == 0) std::cout << "dist: " << dist << " ratio: " << ratio << " closest_multiple: " << closest_multiple << std::endl;
 
             if (closest_multiple >= 1 && closest_multiple <= 3) {
                 if (std::abs(ratio - closest_multiple) < EPS) {
@@ -337,7 +337,7 @@ void TRTNode::filterLinesByGridConsistency(std::vector<LineCandidate>& candidate
         // 如果错误的间隔 >= 2，判定为误检线
         if (invalid_gaps >= 2) {
             to_remove[i] = true;
-            std::cout << "误检线: " << i << " 条" << std::endl;
+            // std::cout << "误检线: " << i << " 条" << std::endl;
         }
     }
     // 执行剔除
@@ -383,7 +383,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
 
     cv::imshow("merged_mask_src", merged_mask_);
     
-    std::cout << "原始竖线条数: " << v_candidates.size() << " 原始横线条数: " << h_candidates.size() << std::endl;
+    // std::cout << "原始竖线条数: " << v_candidates.size() << " 原始横线条数: " << h_candidates.size() << std::endl;
     // ==================== 【0. 新增：计算 best_d 前，基于现有线自适应估算格子像素宽度】 ====================
     float est_grid_w = tracked_grid_size_;
     {
@@ -449,8 +449,8 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
                 sum += val;
             }
             est_grid_w = sum / clusters[best_cluster_idx].size();
-            std::cout << "\033[1;32m[GRID CLUSTER] 聚类成功 -> 独立簇数: " << clusters.size() 
-                        << " | 最大簇样本数: " << max_size << "\033[0m" << std::endl;
+            // std::cout << "\033[1;32m[GRID CLUSTER] 聚类成功 -> 独立簇数: " << clusters.size() 
+            //             << " | 最大簇样本数: " << max_size << "\033[0m" << std::endl;
         } 
         else if (!diffs.empty()) {
             // 【兜底】如果收集到的间距少于 3 个，无法聚类，直接退化为最稳健的中位数
@@ -459,7 +459,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         }
     }
     //至少在一个方向上有两个线时， est_grid_w != 0
-    std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
+    // std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
     test_grid_size_ = est_grid_w;
 
 

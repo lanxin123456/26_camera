@@ -429,7 +429,8 @@ cv::Point3f ActD455::getPointFromPixel(cv::Point2f pixel, float depth)
     return cv::Point3f(point[0], point[1], point[2]);
 }
 
-pPointCloud ActD455::PointCloudGenerateRect(const cv::Rect &roiRect,const cv::Mat &depthimg,int downpick_y,int downpick_x)
+pPointCloud ActD455::PointCloudGenerateRect(const cv::Rect &roiRect,const cv::Mat &depthimg,int downpick_y,int downpick_x,
+                                                const float& nine_square_depth_value)
 {
     cv::TickMeter tm;
     tm.start();
@@ -452,7 +453,7 @@ pPointCloud ActD455::PointCloudGenerateRect(const cv::Rect &roiRect,const cv::Ma
                 continue;
             
             const ushort depth_value = depthimg.at<ushort>(y, x);
-            if (depth_value == 0) 
+            if (depth_value <= nine_square_depth_value - 400 || depth_value <= 0) 
                 continue;
             
             const float depth_meters = depth_value ; //如需转换为米加上 /1000.0f

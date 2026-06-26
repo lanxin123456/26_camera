@@ -122,6 +122,14 @@ private:
     int a_;                 //没有武器计数器
     int b_;                 //有武器计数器
     int c_;                 //没有台计数器
+
+    int b_threshold_;
+    int g_threshold_;
+    int r_threshold_;
+    int h_threshold_up_;
+    int h_threshold_down_;
+    int s_threshold_down_;
+
     float dist_;
 
     trt_yolo::YOLOv8Config config_;

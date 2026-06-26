@@ -72,6 +72,14 @@ void Deal::loadYamlConfig(const std::string& path)
         fs["Deal"]["ImagePath"] >> image_path_;
         fs["Deal"]["VideoPath"] >> video_path_;
 
+        fs["Deal"]["BThresh"] >> b_threshold_;
+        fs["Deal"]["GThresh"] >> g_threshold_;
+        fs["Deal"]["RThresh"] >> r_threshold_;
+        fs["Deal"]["HThreshUP"] >> h_threshold_up_;
+        fs["Deal"]["HThreshDOWN"] >> h_threshold_down_;
+        fs["Deal"]["SThreshDOWN"] >> s_threshold_down_;
+
+
         fs.release();
 
         // --- 参数打印输出 ---
@@ -271,7 +279,7 @@ bool Deal::deal_frame(const Mat &frame, const cv::Rect_<float>& rect, std::ostri
     binary_ = Mat::zeros(480, 640, CV_8UC1);
 
     rect_.x = rect.x + rect.width/2 - 19;
-    rect_.y = rect.y - 20 - 11;
+    rect_.y = rect.y - 21 - 11;
 
     // cout << "rect_.x: " << rect_.x << " rect_.y: " << rect_.y << "rect_.width: " << rect_.width << "rect_.height: " << rect_.height << endl;
     process_rect(rect_, changed_pixels_);
@@ -294,11 +302,11 @@ void Deal::process_rect(const Rect& rect, int& changed_pixels)
             Vec3b bgr = srcframe_.at<Vec3b>(global_i, global_j);
             Vec3b hsv_pixel = hsv.at<Vec3b>(global_i, global_j);
 
-            int all = (bgr[0] + bgr[1] + bgr[2])/3;
-            bool red_bgr = (bgr[2] > 80 && bgr[1] < 180 && bgr[0] < 180);
-            bool red_hsv = (hsv_pixel[0] > 162 || hsv_pixel[0] < 8);
+            bool red_bgr = (bgr[2] > r_threshold_ && bgr[1] < g_threshold_ && bgr[0] < b_threshold_);
+            bool red_h = (hsv_pixel[0] > h_threshold_up_ || hsv_pixel[0] < h_threshold_down_);
+            bool red_s = (hsv_pixel[1] > s_threshold_down_);
 
-            if(red_hsv && red_bgr)
+            if(red_h && red_bgr && red_s)
             {
                 binary_.at<uchar>(global_i, global_j) = 255;
                 changed_pixels++;
@@ -352,7 +360,7 @@ void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, 
     {
         std::unique_lock<std::mutex> lock(task_mutex_);
         task_local = task_;
-        // task_local = 1;
+        task_local = 3;
     }
     if(task_local != current_task_)
     {
@@ -581,9 +589,20 @@ void Deal::process_thread_func()
         if(visualize_)
         {
             cv::rectangle(yolo_all_->res, rect_fixed_, cv::Scalar(0, 255, 0), 1);
+            cv::rectangle(dealImage, rect_, cv::Scalar(0, 255, 0), 1);
+
             if(!frame.empty()) cv::imshow("srcImage", dealImage);
+            if(!frame.empty()) cv::imshow("binary_", binary_);
             if(!yolo_all_->res.empty()) cv::imshow("yolo", yolo_all_->res);
         }
+
+        static int save_counter = 0;
+        std::string save_dir = "/home/lx/code/aaa/2.6_oneYolo_CHANLLENGE_960_720_git/weapon_record/";
+        std::string filename = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
+        std::string grayname = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
+        cv::imwrite(filename, dealImage);
+        cv::imwrite(grayname, binary_);
+
     cv::waitKey(1);
     }
 }

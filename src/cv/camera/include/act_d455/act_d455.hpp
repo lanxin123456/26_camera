@@ -117,7 +117,7 @@ public:
 
     pPointCloud GetSrcCloud(void) const { return srcCloud; };
 	pPointCloud GetWallCloud(void) const { return wallCloud; };
-    pPointCloud PointCloudGenerateRect(const cv::Rect &roiRect,const cv::Mat &depthimg,int downpick_y,int downpick_x);
+    pPointCloud PointCloudGenerateRect(const cv::Rect &roiRect,const cv::Mat &depthimg,int downpick_y,int downpick_x, const float& nine_square_depth_value);
 	void PointCloudGenerateRectandMask(const cv::Rect &roiRect,const cv::Mat &maskimg, const float &lidar_y);
 	
 	// float depth_rect(const cv::Rect &roiRect, const string &color);

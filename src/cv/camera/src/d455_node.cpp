@@ -93,7 +93,7 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 	align_ = std::make_shared<Align>();
     pick_ = std::make_shared<Pick>();
     kfs_ = std::make_shared<KFS>();
-    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_620_2/best_621.engine");
+    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_625/best_625.engine");
 
 
     sub_start_test_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
@@ -355,12 +355,13 @@ void D455Node::odom_callback(const nav_msgs::msg::Odometry::ConstSharedPtr msg) 
 	// gstate_->getlidar(lidar_x_, lidar_y_, lidar_z_, lidar_yaw_, lidar_roll_, lidar_pitch_);
 }
 
-float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthimg, std::ostringstream& oss, int& row, int& col)
+float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthimg, std::ostringstream& oss, int& row, int& col, 
+                                const float& nine_square_depth_value)
 {
 	pPointCloud srcCloud = std::make_shared<PointCloud>();
     pPointCloud src_Cloud = std::make_shared<PointCloud>();
     
-	srcCloud = d455_->PointCloudGenerateRect(roiRect,depthimg,2,1);
+	srcCloud = d455_->PointCloudGenerateRect(roiRect,depthimg,1,1,nine_square_depth_value);
 	
     // cout << " (row:" << row <<  ",col:" << col << ") " << "【原始】点云数：" << srcCloud->points.size() << endl;
 
@@ -401,7 +402,7 @@ float D455Node::rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthim
 
     // cout << " (row:" << row <<  ",col:" << col << ") " << "【处理后】点云数：" << src_Cloud->points.size() << " 深度：" << distance << endl;
     
-	*kfs_show_cloud += *srcCloud;
+	*kfs_show_cloud += *src_Cloud;
 
     return distance;   
 }
@@ -561,7 +562,7 @@ void D455Node::captureLoop()
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
                 src_unet_ = d455_->GetSrcImage().clone();
-                src_unet_ = cv::imread("grid/frame_00937.jpg");
+                // src_unet_ = cv::imread("grid/frame_00937.jpg");
                 depth_unet_ = d455_ ->GetDepthImage().clone();
                 has_frame_unet_ = true;
             }
@@ -827,8 +828,6 @@ void D455Node::process_unet_Loop()
 
         if(d455_log_.is_open()) d455_log_ << std::fixed << std::setprecision(1) << " yolo九宫格深度: " << nine_square_depth_value << " 车x: " << nine_square_depth_value + (199+57-8) + 150;
 
-
-
         yolo_detector_grid_->detect(img);
         if(yolo_detector_grid_->objs.empty()) 
         {
@@ -1081,8 +1080,8 @@ void D455Node::process_state_Loop()
         bool grid_look[3][3]; 
         std::fill(&grid_look[0][0], &grid_look[0][0] + 9, true);
 
-        const int OCCLUSION_PIXEL_THRESH = 600; 
-        const float DEPTH_TOLERANCE = 150.0f;   
+        const int OCCLUSION_PIXEL_THRESH = 2000; 
+        const float DEPTH_TOLERANCE = 300.0f;   
 
         for (size_t i = 0; i < quads.size(); ++i)
         {
@@ -1135,7 +1134,7 @@ void D455Node::process_state_Loop()
         bool grid_occupied[3][3] = {{false}};
         for (const auto& obj : objs_kfs_state) 
         {
-            if(obj.rect.width > 630 || (obj.rect.width / obj.rect.height) > 2.5 || (obj.rect.width / obj.rect.height) < 0.4) 
+            if(obj.rect.width > 630) 
             {
                 continue;
             }
@@ -1176,7 +1175,7 @@ void D455Node::process_state_Loop()
 
             if (grid_occupied[row][col]) continue;
             
-            float kfs_depth_value = rectangle_depth(obj.rect, depth, oss, row, col);
+            float kfs_depth_value = rectangle_depth(obj.rect, depth, oss, row, col, nine_square_depth_value);
 
             if(kfs_depth_value < 300 || kfs_depth_value > 4000) 
             {
@@ -1203,6 +1202,8 @@ void D455Node::process_state_Loop()
 
             grid_occupied[row][col] = true; 
         }
+
+        pcl_->add_points(kfs_show_cloud, "kfs_show_cloud");
 
 
         for (size_t i = 0; i < quads.size(); ++i)
@@ -1251,6 +1252,8 @@ void D455Node::process_state_Loop()
                 grid_state_[row][col] = 0;
             }
         }
+
+        // if(grid_state_[2][0] == 2) rclcpp::shutdown();
 
         if(std::memcmp(grid_state_,grid_pre_state_,sizeof(int[3][3]))) 
         {
@@ -1304,12 +1307,12 @@ void D455Node::process_state_Loop()
                 cv::rectangle(latest_img_state, obj.rect, box_color, 2);
             }
 
-            // 2. 将最终的 grid_state_ 矩阵信息追加到绘图文本列表中
+            // 2. 将最终的 gstate_->grid_state_ 矩阵信息追加到绘图文本列表中
             img_text_lines.push_back("Grid State Matrix:");
             for (int i = 0; i < 3; ++i)
             {
                 std::ostringstream matrix_oss;
-                matrix_oss << "  [ " << grid_state_[i][0] << " " << grid_state_[i][1] << " " << grid_state_[i][2] << " ]";
+                matrix_oss << "  [ " << gstate_->grid_state_[i][0] << " " << gstate_->grid_state_[i][1] << " " << gstate_->grid_state_[i][2] << " ]";
                 img_text_lines.push_back(matrix_oss.str());
             }
 
@@ -1427,7 +1430,7 @@ void D455Node::alignLoop()
                         align_->should_climb = false;
                     }
 
-					cloud = d455_->PointCloudGenerateRect(align_->align_rect, df_.depth,2,2);
+					cloud = d455_->PointCloudGenerateRect(align_->align_rect, df_.depth,2,2,0);
 						
 					if(!cloud->empty())
 					{

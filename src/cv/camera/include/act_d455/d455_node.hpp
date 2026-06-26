@@ -469,6 +469,7 @@ private:
 
 private:
     cv::Mat keep_roi(const cv::Mat& src, const cv::Rect& roi); 
-    float rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthimg, std::ostringstream& oss, int& row, int& col);
+    float rectangle_depth(const cv::Rect &roiRect , const cv::Mat &depthimg, std::ostringstream& oss, int& row, int& col,
+                            const float& nine_square_depth_value);
     float computeDepthByMode(int current_mode, float lidar_x, pPointCloud& wall_cloud_out);
 };

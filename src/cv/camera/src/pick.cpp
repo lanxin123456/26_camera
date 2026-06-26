@@ -37,7 +37,7 @@ void Pick::Input(cv::Mat depth, std::vector<cv::Rect> rects, const std::shared_p
     for(int i = 0, j = 0; i < rects.size(); i++)
     {
         auto rect = rects[i];
-        auto cloud = d455_->PointCloudGenerateRect(rect, depth, 2, 2);
+        auto cloud = d455_->PointCloudGenerateRect(rect, depth, 2, 2, 0);
         if(!cloud->empty())
         {
             int num = RansacPlane(cloud);
