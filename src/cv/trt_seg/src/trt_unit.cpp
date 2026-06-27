@@ -453,9 +453,12 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
             //             << " | 最大簇样本数: " << max_size << "\033[0m" << std::endl;
         } 
         else if (!diffs.empty()) {
-            // 【兜底】如果收集到的间距少于 3 个，无法聚类，直接退化为最稳健的中位数
-            std::sort(diffs.begin(), diffs.end());
-            est_grid_w = diffs[diffs.size() / 2]; 
+            // 找到 diffs 中与 tracked_grid_size_ 最接近的元素
+            auto it = std::min_element(diffs.begin(), diffs.end(),
+                [this](float a, float b) {
+                    return std::abs(a - tracked_grid_size_) < std::abs(b - tracked_grid_size_);
+                });
+            est_grid_w = *it;
         }
     }
     //至少在一个方向上有两个线时， est_grid_w != 0
@@ -467,7 +470,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
 
     if (est_grid_w > 10.0f && (v_candidates.size() >= 3 || h_candidates.size() >= 3)) {
         filterLinesByGridConsistency(v_candidates, est_grid_w, merged_mask_);
-        // filterLinesByGridConsistency(h_candidates, est_grid_w, merged_mask_);
+        filterLinesByGridConsistency(h_candidates, est_grid_w, merged_mask_);
     }
 
 

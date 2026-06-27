@@ -93,7 +93,7 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 	align_ = std::make_shared<Align>();
     pick_ = std::make_shared<Pick>();
     kfs_ = std::make_shared<KFS>();
-    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_625/best_625.engine");
+    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_620_2/best_621.engine");
 
 
     sub_start_test_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
@@ -562,7 +562,7 @@ void D455Node::captureLoop()
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
                 src_unet_ = d455_->GetSrcImage().clone();
-                // src_unet_ = cv::imread("grid/frame_00937.jpg");
+                src_unet_ = cv::imread("grid/frame_00904.jpg");
                 depth_unet_ = d455_ ->GetDepthImage().clone();
                 has_frame_unet_ = true;
             }

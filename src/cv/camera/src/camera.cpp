@@ -62,7 +62,7 @@ void MultiCameraNode::check_and_switch_camera()
     {
         std::lock_guard<std::mutex> lock(mut_camera_);
         // desired_camera = target_camera_;
-        desired_camera = 1;
+        desired_camera = 2;
     }
     if (desired_camera == current_camera_) {
         return;

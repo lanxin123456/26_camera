@@ -192,9 +192,9 @@ private:
 
         // std::cout << "count1: " << count1 << " count2: " << count2 << " count3: " << count3 << std::endl;
         
-        mid_distance.push_back(calculateRealDistance(a,b, 317.011, avg_x1) - 5.0);
-        mid_distance.push_back(calculateRealDistance(a,b, 317.011, avg_x2));
-        mid_distance.push_back(calculateRealDistance(a,b, 317.011, avg_x3) + 5.0);
+        mid_distance.push_back(calculateRealDistance(a,b, 317.011, avg_x1) - 5.0 - 10.0);
+        mid_distance.push_back(calculateRealDistance(a,b, 317.011, avg_x2) - 10.0);
+        mid_distance.push_back(calculateRealDistance(a,b, 317.011, avg_x3) + 5.0 - 10.0);
 
         // std::cout << "\n" << " avg_x1: " << avg_x1 << 
         //         " avg_x2: " << avg_x2 << 

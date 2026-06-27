@@ -272,7 +272,7 @@ void Pclprocess::add_points(const pPointCloud &cloud_out, const std::string& nam
 {
     if (!cloud_out || cloud_out->empty())
     {
-        std::cerr << "cloud_out is empty, skip save\n";
+        // std::cerr << "cloud_out is empty, skip save\n";
         return;
     }
 
