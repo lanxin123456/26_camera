@@ -72,8 +72,8 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
     // d455_sub_ = this->creat_subscription<base_interfaces::msg::AlignStart>
     // ("",rclcpp::SensorDataQoS(),std::bind(&D455Node::d455_callback, this, std::placeholders::_1))
     
-    yolo_detector_grid_  = new trt_yolo::YOLOv8("src/cv/best_59.engine",config_grid_);
-    yolo_detector_  = new trt_yolo::YOLOv8("src/cv/best_59.engine",config_);
+    yolo_detector_grid_  = new trt_yolo::YOLOv8("src/cv/yolo_71.engine",config_grid_);
+    yolo_detector_  = new trt_yolo::YOLOv8("src/cv/yolo_71.engine",config_);
 
     trt_yolo_part2_ = new trt_yolo::YOLOv8("/home/lx/runs/detect/train28/weights/kfs_69.engine",config_part2_);
 
@@ -93,7 +93,7 @@ nine_square_depth_value_{0.f},dealImg_("src/cv/camera/config/deal.yaml")
 	align_ = std::make_shared<Align>();
     pick_ = std::make_shared<Pick>();
     kfs_ = std::make_shared<KFS>();
-    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_620_2/best_621.engine");
+    trt_seg_  = std::make_shared<TRTNode>("/home/lx/兰欣20241872/python/UNet++/output_960x720_630/best_73.engine");
 
 
     sub_start_test_ = this->create_subscription<base_interfaces::msg::GridStart>("/gridstart", 10,
@@ -521,20 +521,20 @@ void D455Node::captureLoop()
             //     is_identify_KFS_ = false;
             // }
 
-            // if(is_identify_KFS_)
-            // {
-            //     if(d455_log_.is_open()) d455_log_ << "看手机" << endl;
-            //     if(dealImg_.Deal(frame)) 
-            //     {
-            //         cv::waitKey(1);
-            //     }
-            //     else
-            //     {
-            //         is_identify_KFS_ = false;
-            //         std::this_thread::sleep_for(std::chrono::milliseconds(10));
-            //         dealImg_.cleanup();
-            //     }
-            // }
+            if(is_identify_KFS_)
+            {
+                if(d455_log_.is_open()) d455_log_ << "看手机" << endl;
+                if(dealImg_.Deal(frame)) 
+                {
+                    cv::waitKey(1);
+                }
+                else
+                {
+                    is_identify_KFS_ = false;
+                    std::this_thread::sleep_for(std::chrono::milliseconds(10));
+                    dealImg_.cleanup();
+                }
+            }
             
             if (!frame.empty()) video_writer.write(frame);
             
@@ -554,7 +554,7 @@ void D455Node::captureLoop()
                 std::unique_lock<std::mutex> lock(frame_mutex);
                 depth_ = d455_ ->GetDepthImage().clone();
                 src_ = d455_->GetSrcImage().clone();
-                // src_ = cv::imread("grid/frame_02272.jpg");
+                // src_ = cv::imread("grid/frame_01771.jpg");
                 has_frame_ = true;
             } 
             get_frame_.notify_all();
@@ -562,7 +562,7 @@ void D455Node::captureLoop()
             {
                 std::unique_lock<std::mutex> lock(frame_unet_mutex);
                 src_unet_ = d455_->GetSrcImage().clone();
-                src_unet_ = cv::imread("grid/frame_00904.jpg");
+                // src_unet_ = cv::imread("grid/frame_01771.jpg");
                 depth_unet_ = d455_ ->GetDepthImage().clone();
                 has_frame_unet_ = true;
             }
@@ -808,7 +808,7 @@ void D455Node::process_unet_Loop()
             std::unique_lock<std::mutex> lock(mut_pos_);
             // pos_z = lidar_z_ + 400 + 431 + 80;
             pos_z = 0 + 400 + 431 + 80;
-            pos_z += 0;
+            pos_z += 200;
             // if(d455_log_.is_open()) d455_log_  << " pos_z: " << pos_z << endl;
         } 
 
@@ -1060,7 +1060,7 @@ void D455Node::process_state_Loop()
 
         // std::chrono::steady_clock::time_point quads_match_time = matched_quads_data.timestamp;
 
-        if(quads.empty()) 
+        if(quads.empty() || nine_square_depth_value < 10) 
         {
             cout << "quads为空" << endl;
             continue;
@@ -1080,7 +1080,7 @@ void D455Node::process_state_Loop()
         bool grid_look[3][3]; 
         std::fill(&grid_look[0][0], &grid_look[0][0] + 9, true);
 
-        const int OCCLUSION_PIXEL_THRESH = 2000; 
+        const int OCCLUSION_PIXEL_THRESH = 1200; 
         const float DEPTH_TOLERANCE = 300.0f;   
 
         for (size_t i = 0; i < quads.size(); ++i)
@@ -1121,6 +1121,8 @@ void D455Node::process_state_Loop()
                 }
             }
 
+            if(row == 2 && col == 2) if(d455_log_.is_open()) oss << " 格子(" << row << "," << col << ")初始计数值: " << occluded_pixels_count << " ";
+
             if (occluded_pixels_count > OCCLUSION_PIXEL_THRESH) {
                 grid_look[row][col] = false;
                 if(d455_log_.is_open()) {
@@ -1145,7 +1147,6 @@ void D455Node::process_state_Loop()
             {
                 if (gstate_->isPointInQuad2D(center_px, quads[i])) 
                 {
-                    matched_grid_id = i + 1;
                     break;
                 }
             }
@@ -1170,6 +1171,7 @@ void D455Node::process_state_Loop()
                 if(d455_log_.is_open()) {
                     oss << " 格子【" << row << "," << col << "】跳过更新";
                 }
+                grid_state_[row][col] = grid_pre_state_[row][col];
                 continue;
             }
 
@@ -1204,7 +1206,6 @@ void D455Node::process_state_Loop()
         }
 
         pcl_->add_points(kfs_show_cloud, "kfs_show_cloud");
-
 
         for (size_t i = 0; i < quads.size(); ++i)
         {
@@ -1266,6 +1267,7 @@ void D455Node::process_state_Loop()
             if(count >= 3)
             {
                 std::memcpy(gstate_->grid_state_, grid_state_, sizeof(int[3][3]));
+                std::memcpy(grid_pre_state_, grid_state_, sizeof(int[3][3]));
                 count = 0;
             }
         }
@@ -1281,6 +1283,10 @@ void D455Node::process_state_Loop()
             if (i != 2) oss << ", ";
         }
 
+        int start_push = 0;
+        start_push = trt_seg_->start_push_;
+
+        oss << " start_push: " << start_push;
         oss << "\n------------------------------------------\n";
          
         gstate_ -> publish_state();

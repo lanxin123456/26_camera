@@ -66,11 +66,14 @@ public:
         std::lock_guard<std::mutex> lock(mat_mutex_); 
         return merged_mask_show_.clone(); 
     }
+    int start_push_ = 0;
 private:
     cv::Mat resized_host_; // 用于存放缩放后的图像
     bool is_registered_ = false; // 标记是否已注册
 
     float grid_depth_ = -1.0f;
+    float grid_depth_rec_ = -1.0f;
+    
     std::string engine_path_;  
 
     cv::Mat mask_show_;
@@ -204,6 +207,7 @@ private:
     float ideal_h_v_[4];
 
     int frame_idx_ = 0;
+    
     
     int W_ = 0;
     int H_ = 0;

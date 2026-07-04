@@ -266,11 +266,15 @@ void TRTNode::computeGridQuads(int src_w, int src_h, int net_w, int net_h) {
                 }
             }
         }
-
         if (count > 0) {
             grid_depth_ = static_cast<float>(sum_depth / count);
         }
     }
+    else{
+        grid_depth_ = grid_depth_rec_;
+        return;
+    }
+    grid_depth_rec_ = grid_depth_;
 }
 
 
@@ -462,7 +466,7 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         }
     }
     //至少在一个方向上有两个线时， est_grid_w != 0
-    // std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
+    std::cout << "格子初步宽度est_grid_w: " << est_grid_w << std::endl; 
     test_grid_size_ = est_grid_w;
 
 
@@ -539,6 +543,11 @@ std::vector<Unet::Quad2D> TRTNode::getgridquads(const cv::Mat& frame, float& pos
         }
     }
 
+    start_push_ = 0;
+    bool start_1 = tracked_h_[1].intercept > est_grid_w*0.5;
+    bool start_2 = tracked_h_[1].is_visible;
+    if(start_1 && start_2) start_push_ = 1;
+
     // ==================== 拓扑时序槽位追踪与节点输出 ====================
     return trackGridAndGetNodes(v_candidates, est_grid_w, frame, merged_mask_);
 }
@@ -603,7 +612,7 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
 
         float g1 = x1 - x0; float g2 = x2 - x1;
 
-        // std::cout << "g1: " << g1 << " g2: " << g2 << " est_grid_w: " << est_grid_w << std::endl;
+        std::cout << "g1: " << g1 << " g2: " << g2 << " est_grid_w: " << est_grid_w << std::endl;
         if (g1 > 1.45f * est_grid_w) { // 槽位 1 缺失 (断开的是左间距)
             final_intercepts[0] = x0;
             final_intercepts[1] = x0 + est_grid_w;
@@ -631,12 +640,13 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
             return true;
             
         } else {  
-            // std::cout << "left_x: " << x0 + x_min - 0.2f * est_grid_w << " right_x: " << x2 + x_max + 0.2f * est_grid_w << " strip_w: " << strip_w << std::endl;
+            std::cout << "left_x: " << x0 + x_min - 0.1f * est_grid_w << " right_x: " << x2 + x_max + 0.1f * est_grid_w << " strip_w: " << strip_w << std::endl;
 
             int left_pixels = count_mask_pixels(x0 + x_min - 0.1f * est_grid_w, strip_w);
             int right_pixels = count_mask_pixels(x2 + x_max + 0.1f * est_grid_w, strip_w);
 
-            // std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
+            std::cout << "left_pixels: " << left_pixels << " right_pixels: " << right_pixels << std::endl;
+
             if (left_pixels > right_pixels && left_pixels > 5) { 
                 final_intercepts[0] = x0 - est_grid_w;
                 final_intercepts[1] = x0; final_intercepts[2] = x1; final_intercepts[3] = x2;
@@ -662,6 +672,9 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
 
             }
             else if (left_pixels < 20 && right_pixels < 20) { 
+                
+                if(est_grid_w < 200) return false;
+
                 float len_l = std::abs(x0 - 0);
                 float len_r = std::abs(x2 - merged_mask_.cols - 1);
 
@@ -760,6 +773,8 @@ bool TRTNode::reconstructGridLines(std::vector<LineCandidate>& v_candidates,
             return true;
 
         } else {
+            if(est_grid_w < 300) return false;
+
             float len_l = std::abs(x0 - 0);
             float len_r = std::abs(x1 - merged_mask_.cols - 1);
 
@@ -808,7 +823,8 @@ void TRTNode::trackSingleDirection(std::vector<LineCandidate>& candidates, std::
     // 1. 基础数据关联（贪心匹配）
     for (int k = 0; k < 4; ++k) {
         int best_idx = -1;
-        float min_dist = 150.0f;  
+        // float min_dist = 150.0f;  
+        float min_dist = test_grid_size_ * 0.5;
         for (size_t i = 0; i < candidates.size(); ++i) {
             if (det_matched[i]) continue;
             float dist = std::abs(candidates[i].intercept - tracked_lines[k].intercept);

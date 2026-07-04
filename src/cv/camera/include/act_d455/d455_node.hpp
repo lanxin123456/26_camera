@@ -76,7 +76,10 @@ public:
 private:
 
     std::vector<float> distances_;
-    float real_width_mm[10] = {530,540,530,530,540,530,530,540,530};
+    
+    // float real_width_mm[10] = {530,540,530,530,540,530,530,540,530};
+    float real_width_mm[10] = {529,548,529,529,548,529,529,548,529};
+
     float calculateRealDistance(float a,float b, float x1, float x2) 
     {
         float integral_x2 = 0.5 * a * x2 * x2 + b * x2;
@@ -219,7 +222,7 @@ private:
         return (Rz * Ry * Rx).toRotationMatrix();
     }
 
-    int start_test_{2};
+    int start_test_{1};
 
     void publishdist(float dist);
 

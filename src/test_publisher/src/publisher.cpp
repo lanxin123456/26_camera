@@ -15,11 +15,11 @@ public:
         // 创建发布者
         publisher_ = this->create_publisher<base_interfaces::msg::CameraChoose>("/camera_mode", 10);
 
-        sequence_ = {3, 2, 1};
+        sequence_ = {1, 2, 1};
 
         // 定时器（5秒）
         timer_ = this->create_wall_timer(
-            500ms,
+            200ms,
             std::bind(&CameraModePublisher::timer_callback, this)
         );
 

@@ -17,7 +17,7 @@ D455Node:
     white_hsv_min: [0, 0, 110, 0]
     white_hsv_max: [180, 40, 255, 0]
   ActD_params:
-    bag_path: "/home/lx/d455_1782545317.bag"
+    bag_path: "/home/lx/d455_1782942137.bag"
 
 # Deal parameters
 Deal:
@@ -33,4 +33,4 @@ Deal:
   HThreshDOWN: 10
   SThreshDOWN: 60
   ImagePath: "/home/lx/frame/yolo_52_3/1777710386_255516.jpg"
-  VideoPath: "/media/lx/Hafilsave/camera_back_2026-06-27_14-49-54.avi"
+  VideoPath: "/media/lx/Hafilsave/camera_back_2026-07-04_15-02-42_cut_00-08_to_00-10.avi"

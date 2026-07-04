@@ -48,6 +48,13 @@ Deal::Deal(const std::string& config_path):
                                     << put_time(localTime, "%Y-%m-%d %H:%M:%S") 
                                     << " ===================================================================================================================================" 
                                     << endl;
+
+    test_rect_y.open("test_rect_y.csv", std::ios::app);
+    if(test_rect_y.is_open()) test_rect_y << "\n\n\n\n\n"
+                                    << "时间, " 
+                                    << put_time(localTime, "%Y-%m-%d %H:%M:%S") 
+                                    << " ===================================================================================================================================" 
+                                    << endl;                                
 }
 
 void Deal::loadYamlConfig(const std::string& path) 
@@ -217,59 +224,140 @@ void Deal::camera_thread_func()
     }
 }
 
-void Deal::calculate_dist(const cv::Mat& dealImage,const std::vector<cv::Rect>& rects)
+void Deal::calculate_dist(const cv::Mat& dealImage, const std::vector<cv::Rect>& rects)
 {
-    int dist_pixel = dealImage.cols / 2;
-    int lenth_pixel = 0;
-    float current_min_dist = FLT_MAX;
-    cv::Point current_closest_rect(0, 0);
+    float center_ref = 340.49393f; 
+    bool found_target = false;
+    cv::Rect matched_rect;
 
-    // 找到当前帧中距离中心最近的检测框
-    for (const auto& rect : rects)
+    // 1. 尝试匹配（如果上一帧有目标，优先在预测位置附近找）
+    if (last_frame_has_target_) 
     {
-        // if(rect.area() < 1000 || rect.area() > 7000) continue;
-        float dist = (rect.x + rect.width / 2.0f) - 340.49393;
-        if (std::abs(dist) < std::abs(dist_pixel))
+        float pred_center_x = last_target_center_x_ + target_dx_;
+        float min_pred_dist = FLT_MAX;
+        
+        for (const auto& rect : rects)
         {
-            dist_pixel = dist;
-            lenth_pixel = rect.width;
-            current_min_dist = std::abs(dist);
-            current_closest_rect = cv::Point(rect.x, rect.y);
+            // --- 🎯 遮挡判定：过滤畸变框 ---
+            float w = static_cast<float>(rect.width);
+            if (w < 1.0f) w = 1.0f;
+            if ((static_cast<float>(rect.height) / w) > 1.2f) continue; // 大于1.2视作被部分遮挡，跳过不匹配
+
+            float current_center_x = rect.x + rect.width / 2.0f;
+            float pred_dist = std::abs(current_center_x - pred_center_x);
+            
+            if (pred_dist < 120.0f && pred_dist < min_pred_dist)
+            {
+                min_pred_dist = pred_dist;
+                matched_rect = rect;
+                found_target = true;
+            }
         }
     }
 
-    // 防止除 0 / 无目标 << "\n"
+    // 2. 首次捕获（只有在原本就没有任何追踪目标时）
+    if (!last_frame_has_target_)
+    {
+        float min_center_dist = FLT_MAX;
+        for (const auto& rect : rects)
+        {
+            // --- 🎯 遮挡判定：首次捕获时也拒绝锁定被遮挡的残缺目标 ---
+            float w = static_cast<float>(rect.width);
+            if (w < 1.0f) w = 1.0f;
+            // if ((static_cast<float>(rect.height) / w) > 1.2f) continue; 
+
+            float current_center_x = rect.x + rect.width / 2.0f;
+            float center_dist = std::abs(current_center_x - center_ref);
+            if (center_dist < min_center_dist)
+            {
+                min_center_dist = center_dist;
+                matched_rect = rect;
+                found_target = true;
+            }
+        }
+    }
+
+    // 3. 状态决策与计算数据准备
+    float dist_pixel = 0.0f;
+    float lenth_pixel = 0.0f;
+
+    if (found_target)
+    {
+        // 【正常追踪状态】(此时进入这里的框，高宽比一定 <= 1.2)
+        float current_center_x = matched_rect.x + matched_rect.width / 2.0f;
+        
+        if (last_frame_has_target_ && missing_frames_ == 0)
+        {
+            float current_dx = current_center_x - last_target_center_x_;
+            target_dx_ = 0.8f * target_dx_ + 0.2f * current_dx;
+        }
+
+        float current_w = static_cast<float>(matched_rect.width);
+        float current_h = static_cast<float>(matched_rect.height);
+        if (current_w < 1.0f) current_w = 1.0f;
+        
+        float current_ratio = current_h / current_w;
+        // 这里的滤波可以保留，因为进入正常状态的框比例都在有效范围内，滤波能平滑小幅度的形变抖动
+        if (last_frame_has_target_ && target_ratio_ > 0.0f) {
+            target_ratio_ = current_ratio; // 依照你上一版的代码赋值
+        } else {
+            target_ratio_ = current_ratio;
+        }
+
+        last_target_center_x_ = current_center_x;
+        last_target_w_ = current_w;
+        last_target_h_ = current_h; 
+        missing_frames_ = 0;
+        last_frame_has_target_ = true;
+
+        dist_pixel = current_center_x - center_ref;
+        lenth_pixel = current_w;
+    }
+    else
+    {
+        // 【遮挡/消失状态】
+        // 当发生遮挡导致没有框，或者框的高宽比 > 1.2 被我们上面 `continue` 强制过滤掉时，就会进入盲推逻辑！
+        if (last_frame_has_target_ && missing_frames_ < MAX_MISSING_FRAMES)
+        {
+            missing_frames_++;
+            last_target_center_x_ += target_dx_; 
+            
+            dist_pixel = last_target_center_x_ - center_ref;
+            lenth_pixel = last_target_w_; 
+            
+            // 盲推期间，target_ratio_ 保持遮挡前最后一次健康的比例不变
+        }
+        else
+        {
+            last_frame_has_target_ = false;
+            missing_frames_ = 0;
+            target_dx_ = 0.0f;
+            target_ratio_ = 0.0f; 
+            dist_ = 999.0f;
+            return;
+        }
+    }
+
+    // 4. 误差拟合与最终物理距离赋值
     if (lenth_pixel == 0) 
     {
         dist_ = 0.0f;
         return;
     }
+    
     float pd = 28.0f / lenth_pixel;
     pd = std::round(pd * 100) / 100.0f;
     pd *= dist_pixel;
 
-    // 误差拟合修正
-    // dist_ =
-    //     -7.490163
-    //     + 0.589434 * lenth_pixel
-    //     + 0.887561 * pd
-    //     - 0.011031 * lenth_pixel * lenth_pixel
-    //     + 0.006128 * lenth_pixel * pd
-    //     + 0.000173 * pd * pd
-    //     + 0.000067 * lenth_pixel * lenth_pixel * lenth_pixel
-    //     - 0.000068 * lenth_pixel * lenth_pixel * pd
-    //     + 0.000004 * lenth_pixel * pd * pd
-    //     - 0.000004 * pd * pd * pd 
-    //     - 1;
+    dist_ = pd + 4.3f;
+    if (dist_ < -200.0f) dist_ = -200.0f;
+    if (dist_ > 200.0f)  dist_ = 200.0f;
 
-    // dist_ = pd - (dist_ - pd) - 5.5f;
+    // 日志打印
 
-    dist_ = pd + 4.3;
-    if (dist_ < -190) dist_ = -190;
-    if (dist_ > 190)  dist_ = 190;
 }
 
-bool Deal::deal_frame(const Mat &frame, const cv::Rect_<float>& rect, std::ostringstream& oss)
+bool Deal::deal_frame(const Mat &frame, const cv::Rect_<float>& rect, const cv::Rect2f& rect_gan, std::ostringstream& oss)
 {
     if(frame.empty()) return false;
 
@@ -280,6 +368,10 @@ bool Deal::deal_frame(const Mat &frame, const cv::Rect_<float>& rect, std::ostri
 
     rect_.x = rect.x + rect.width/2 - 19;
     rect_.y = rect.y - 21 - 11;
+
+    if(test_rect_y.is_open()) test_rect_y << rect.y << endl;
+    // oss << " ||间隔( " << rect_.y - rect_gan.y + rect_gan.height << " )";
+    oss << " y: " << rect_.y;
 
     // cout << "rect_.x: " << rect_.x << " rect_.y: " << rect_.y << "rect_.width: " << rect_.width << "rect_.height: " << rect_.height << endl;
     process_rect(rect_, changed_pixels_);
@@ -319,11 +411,14 @@ bool Deal::cal_ch_rate(const int& changed_pixels_, std::ostringstream& oss)
 {
     double change_rate = static_cast<double>(changed_pixels_) / total_pixels_;
     change_rate = std::round(change_rate * 1000) / 1000;
-    if(change_rate > 0.7)
+
+    if(change_rate > 0.2) upstate_ = false;
+
+    if(change_rate > 0.75)
     {
         consistent_frame_count_++;
     }
-    else if(change_rate <= 0.7)
+    else if(change_rate <= 0.75)
     {
         if(consistent_frame_count_ > 0) consistent_frame_count_--;
     }
@@ -345,7 +440,7 @@ bool Deal::cal_ch_rate(const int& changed_pixels_, std::ostringstream& oss)
 }
  
 
-void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, const Mat &frame)
+void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, const cv::Rect2f& rect_gan, const Mat &frame)
 {
     // if(rect.x < 0 || rect.y < 0 || rect.x + rect.width  > frame.cols || rect.y + rect.height > frame.rows) 
     // {
@@ -355,12 +450,13 @@ void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, 
     std::ostringstream oss;
     base_interfaces::msg::Camera msg;
     msg.weapon_state = -1;
+    msg.ok_assemble = 0;
     bool ok = false;
     int task_local = -1;
     {
         std::unique_lock<std::mutex> lock(task_mutex_);
         task_local = task_;
-        task_local = 3;
+        task_local = 2;
     }
     if(task_local != current_task_)
     {
@@ -419,10 +515,17 @@ void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, 
             break;
 //开始武器头是否拼接成功
         case 3:
-            ok = deal_frame(frame, rect, oss);
+            if(rect.x < 0 || rect.y < 0) break;
+
+            ok = deal_frame(frame, rect, rect_gan, oss);
+            if(upstate_) {
+                if(rect.y > record_y_) record_y_ = rect.y;
+            }
+            if(ok) now_y_ = rect.y;
+
             msg.weapon_state = 1;
             msg.dist_y = 0;
-            if(ok) 
+            if(ok && (record_y_ - now_y_ > 2)) 
             {
                 msg.ok_assemble = 1;
             }
@@ -433,8 +536,16 @@ void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, 
     }
     current_task_ = task_local;
     if(camera_backward.is_open()) oss << " 交并比：" << calculateIoU(rect_fixed_, rect) 
-    << " 当前任务, " << current_task_ << "  ,a_, " << a_ <<  "  ,b_, " << b_ <<  "  ,c_, " << c_<< "  ,武器头状态, " << msg.weapon_state << "   ,武器头距离, " << msg.dist_y << "  ,是否拼接成功, " << msg.ok_assemble << "\n";
-    
+    << " 当前任务, " << current_task_ << "  ,a_, " << a_ <<  "  ,b_, " << b_ <<  "  ,c_, " << c_<< "  ,武器头状态, "
+     << msg.weapon_state << "   ,武器头距离, " << msg.dist_y << "  ,是否拼接成功, " << msg.ok_assemble;
+
+    if (camera_backward.is_open()) {
+        oss << "  [预测遮挡] 帧数: " << missing_frames_ 
+                        << " | 推算中心X: " << last_target_center_x_ 
+                        << " | 最近偏移量: " << dist_ 
+                        << " | 高宽比: " << target_ratio_ 
+                        << " | 速度dx: " << target_dx_ << "\n";
+    }
     if(camera_backward.is_open())
     {
         camera_backward << oss.str();
@@ -535,7 +646,10 @@ void Deal::process_thread_func()
 
         objs_weapon_.clear();
         objs_tai_.clear();
+        objs_gan_.clear();
         rects_.clear();
+        rects_gan_.clear();
+        
         cv::Rect rect_fixed_(298, 230, 70, 65);
         for (const auto& obj : yolo_all_->objs)
         {
@@ -551,28 +665,38 @@ void Deal::process_thread_func()
                     rects_.push_back(obj.rect);
                     break;
                 case 1: objs_tai_.push_back(obj); break;
+                case 2: 
+                        objs_gan_.push_back(obj); 
+                        rects_gan_.push_back(obj.rect);
+                    break;
             default:
                 break;
             }
         }
 
         cv::Rect2f rect(-1, -1, -1, -1);
+        cv::Rect2f rect_gan(-1, -1, -1, -1);
 
-        if(objs_weapon_.size() != 0)
-        {
-            calculate_dist(dealImage, rects_);
-        }
-        else
-        {
-        } 
+        // if(objs_weapon_.size() != 0)
+        // {
+        //     calculate_dist(dealImage, rects_);
+        // }
+        // else
+        // {
+        // } 
+        calculate_dist(dealImage, rects_);
 
         filterAndSortWeapons(rects_, objs_weapon_, 0.4);
         if(rects_.size() != 0) 
         {
             rect = rects_[0];
         }
+        if(rects_gan_.size() != 0) 
+        {
+            rect_gan = rects_gan_[0];
+        }
 
-        deal(rects_.size(), objs_tai_.size(), rect, dealImage);
+        deal(rects_.size(), objs_tai_.size(), rect, rect_gan, dealImage);
         
         #ifdef SAVE_IMAGE
         struct timeval tv;
@@ -591,8 +715,8 @@ void Deal::process_thread_func()
             cv::rectangle(yolo_all_->res, rect_fixed_, cv::Scalar(0, 255, 0), 1);
             cv::rectangle(dealImage, rect_, cv::Scalar(0, 255, 0), 1);
 
-            if(!frame.empty()) cv::imshow("srcImage", dealImage);
-            if(!frame.empty()) cv::imshow("binary_", binary_);
+            if(!dealImage.empty()) cv::imshow("srcImage", dealImage);
+            if(!binary_.empty()) cv::imshow("binary_", binary_);
             if(!yolo_all_->res.empty()) cv::imshow("yolo", yolo_all_->res);
         }
 
@@ -600,8 +724,8 @@ void Deal::process_thread_func()
         std::string save_dir = "/home/lx/code/aaa/2.6_oneYolo_CHANLLENGE_960_720_git/weapon_record/";
         std::string filename = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
         std::string grayname = save_dir + "kfs_" + std::to_string(save_counter++) + ".jpg";
-        cv::imwrite(filename, dealImage);
-        cv::imwrite(grayname, binary_);
+        if(!dealImage.empty())cv::imwrite(filename, dealImage);
+        if(!binary_.empty()) cv::imwrite(grayname, binary_);
 
     cv::waitKey(1);
     }
