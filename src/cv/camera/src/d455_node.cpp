@@ -1147,6 +1147,9 @@ void D455Node::process_state_Loop()
             {
                 if (gstate_->isPointInQuad2D(center_px, quads[i])) 
                 {
+                    float center =(quads[i].pts[0].x + quads[i].pts[3].x )/2;
+                    if(obj.rect.y > quads[i].pts[1].y || obj.rect.x > center ||  obj.rect.x + obj.rect.width < center) continue;
+                    matched_grid_id = i + 1;    
                     break;
                 }
             }

@@ -24,7 +24,7 @@ Deal::Deal(const std::string& config_path):
     b_{0},
     c_{0},
     dist_{1000.f},
-    config_ {2, {"weapon", "tai"}, {{0, 0, 255}, {0,255,0}}, cv::Size(640,640), 100, 0.6f, 0.65f}
+    config_ {3, {"weapon", "tai", "gun"}, {{0, 0, 255}, {0,255,0}, {255,0,0}}, cv::Size(640,640), 100, 0.6f, 0.65f}
 {
     loadYamlConfig(config_path);
 
@@ -32,7 +32,7 @@ Deal::Deal(const std::string& config_path):
     ACam.Init();
     #endif
 
-    yolo_all_ = std::make_unique<trt_yolo::YOLOv8>(std::string("/home/lx/runs/detect/train23/weights/best.engine"), config_);
+    yolo_all_ = std::make_unique<trt_yolo::YOLOv8>(std::string("/home/lx/runs/detect/train30/weights/best.engine"), config_);
 
     yolo_all_->make_pipe(true);
 
@@ -230,64 +230,144 @@ void Deal::calculate_dist(const cv::Mat& dealImage, const std::vector<cv::Rect>&
     bool found_target = false;
     cv::Rect matched_rect;
 
-    // 1. 尝试匹配（如果上一帧有目标，优先在预测位置附近找）
-    if (last_frame_has_target_) 
+    // =================================================================
+    // 阶段 1：未捕获序号 4 —— 纯区域状态机计数
+    // =================================================================
+    if (!index4_captured_)
     {
-        float pred_center_x = last_target_center_x_ + target_dx_;
-        float min_pred_dist = FLT_MAX;
-        
-        for (const auto& rect : rects)
-        {
-            // --- 🎯 遮挡判定：过滤畸变框 ---
-            float w = static_cast<float>(rect.width);
-            if (w < 1.0f) w = 1.0f;
-            if ((static_cast<float>(rect.height) / w) > 1.2f) continue; // 大于1.2视作被部分遮挡，跳过不匹配
+        // 1-1. 扫描当前帧各个指定区域的占用情况
+        bool current_zone_A_occupied = false; // 区域A: 560 ~ 640
+        bool current_zone_B_occupied = false; // 区域B: 250 ~ 310
 
-            float current_center_x = rect.x + rect.width / 2.0f;
-            float pred_dist = std::abs(current_center_x - pred_center_x);
+        for (const auto& rect : rects) {
+            float cx = rect.x + rect.width / 2.0f;
+            if (cx >= 560.0f && cx <= 640.0f) current_zone_A_occupied = true;
+            if (cx >= 250.0f && cx <= 310.0f) current_zone_B_occupied = true;
+        }
+
+        // 1-2. 初始帧判定（序号 1）
+        if (max_assigned_index_ == 0) 
+        {
+            float min_center_dist = FLT_MAX;
+            for (const auto& rect : rects) {
+                float cx = rect.x + rect.width / 2.0f;
+                float center_dist = std::abs(cx - center_ref);
+                if (center_dist < 150.0f && center_dist < min_center_dist) {
+                    min_center_dist = center_dist;
+                    max_assigned_index_ = 1; 
+                }
+            }
+            last_zone_A_occupied_ = current_zone_A_occupied;
+            last_occlusion_state_ = (current_zone_B_occupied && !current_zone_A_occupied);
+        }
+        // 1-3. 递增判定（序号 2 ~ 4 的触发阶段）
+        else if (max_assigned_index_ < 4)
+        {
+            bool current_occlusion_state = (current_zone_B_occupied && !current_zone_A_occupied);
+
+            if (current_zone_A_occupied && !last_zone_A_occupied_ && !last_occlusion_state_) {
+                max_assigned_index_++;
+            }
+            else if (current_occlusion_state && !last_occlusion_state_ && !last_zone_A_occupied_) {
+                max_assigned_index_++;
+            }
+
+            last_zone_A_occupied_ = current_zone_A_occupied;
+            last_occlusion_state_ = current_occlusion_state;
+        }
+
+        // =================================================================
+        // 【核心修复】：只要序号达到了 4 且尚未成功捕获，就在每一帧持续寻找武器 4
+        // =================================================================
+        if (max_assigned_index_ == 4 && !index4_captured_) 
+        {
+            float max_x = -1.0f;
+            cv::Rect rightmost_rect;
+            bool found_valid_weapon = false;
+
+            for (const auto& rect : rects) {
+                float cx = rect.x + rect.width / 2.0f;
+                float w = static_cast<float>(rect.width);
+                if (w < 1.0f) w = 1.0f;
+                
+                float current_ratio = static_cast<float>(rect.height) / w;
+                // 每帧都打印，方便调试观察
+                // cout << "[寻找目标4] 当前框X: " << cx << " | 高宽比：" << current_ratio << endl;
+
+                // 序号4必定不被遮挡，在右侧入场
+                if (cx > center_ref && current_ratio <= 1.2f) {
+                    if (cx > max_x) {
+                        max_x = cx;
+                        rightmost_rect = rect;
+                        found_valid_weapon = true;
+                    }
+                }
+            }
+
+            // 一旦在某帧真正抓到了符合条件的武器 4，立刻激活高精度追踪状态
+            if (found_valid_weapon) {
+                index4_captured_ = true;
+                last_frame_has_target_ = true;
+                last_target_center_x_ = max_x;
+                last_target_w_ = static_cast<float>(rightmost_rect.width);
+                target_dx_ = 0.0f;
+                missing_frames_ = 0;
+                
+                matched_rect = rightmost_rect;
+                found_target = true;
+                cout << "==== 成功捕获序号 4 目标！====" << endl;
+            }
+        }
+
+        if (camera_backward.is_open()) camera_backward << " | 当前最新序号: " << max_assigned_index_ << "\n";
+
+        // 如果本帧依然没有捕获到序号 4，正常拦截返回 999
+        if (!index4_captured_) {
+            dist_ = 999.0f;
+            return;
+        }
+    }
+    // =================================================================
+    // 阶段 2：已成功捕获序号 4 —— 执行原有的标准高精度追踪
+    // =================================================================
+    else 
+    {
+        if (last_frame_has_target_) 
+        {
+            found_target = false;
+            float pred_center_x = last_target_center_x_ + target_dx_;
+            float min_pred_dist = FLT_MAX;
             
-            if (pred_dist < 120.0f && pred_dist < min_pred_dist)
+            for (const auto& rect : rects)
             {
-                min_pred_dist = pred_dist;
-                matched_rect = rect;
-                found_target = true;
+                float w = static_cast<float>(rect.width);
+                if (w < 1.0f) w = 1.0f;
+                if ((static_cast<float>(rect.height) / w) > 1.2f) continue; // 高宽比拦截
+
+                float current_center_x = rect.x + rect.width / 2.0f;
+                float pred_dist = std::abs(current_center_x - pred_center_x);
+                
+                cout << "current_center_x: " << current_center_x << " pred_center_x: " << pred_center_x << endl;
+                if (pred_dist < 120.0f && pred_dist < min_pred_dist) {
+                    min_pred_dist = pred_dist;
+                    matched_rect = rect;
+                    found_target = true;
+                    cout << "成功 found_target" << endl;
+                }
             }
         }
     }
 
-    // 2. 首次捕获（只有在原本就没有任何追踪目标时）
-    if (!last_frame_has_target_)
-    {
-        float min_center_dist = FLT_MAX;
-        for (const auto& rect : rects)
-        {
-            // --- 🎯 遮挡判定：首次捕获时也拒绝锁定被遮挡的残缺目标 ---
-            float w = static_cast<float>(rect.width);
-            if (w < 1.0f) w = 1.0f;
-            // if ((static_cast<float>(rect.height) / w) > 1.2f) continue; 
-
-            float current_center_x = rect.x + rect.width / 2.0f;
-            float center_dist = std::abs(current_center_x - center_ref);
-            if (center_dist < min_center_dist)
-            {
-                min_center_dist = center_dist;
-                matched_rect = rect;
-                found_target = true;
-            }
-        }
-    }
-
-    // 3. 状态决策与计算数据准备
+    // =================================================================
+    // 3. 状态决策与数据计算（盲推维持）
+    // =================================================================
     float dist_pixel = 0.0f;
     float lenth_pixel = 0.0f;
 
     if (found_target)
     {
-        // 【正常追踪状态】(此时进入这里的框，高宽比一定 <= 1.2)
         float current_center_x = matched_rect.x + matched_rect.width / 2.0f;
-        
-        if (last_frame_has_target_ && missing_frames_ == 0)
-        {
+        if (last_frame_has_target_ && missing_frames_ == 0) {
             float current_dx = current_center_x - last_target_center_x_;
             target_dx_ = 0.8f * target_dx_ + 0.2f * current_dx;
         }
@@ -295,14 +375,7 @@ void Deal::calculate_dist(const cv::Mat& dealImage, const std::vector<cv::Rect>&
         float current_w = static_cast<float>(matched_rect.width);
         float current_h = static_cast<float>(matched_rect.height);
         if (current_w < 1.0f) current_w = 1.0f;
-        
-        float current_ratio = current_h / current_w;
-        // 这里的滤波可以保留，因为进入正常状态的框比例都在有效范围内，滤波能平滑小幅度的形变抖动
-        if (last_frame_has_target_ && target_ratio_ > 0.0f) {
-            target_ratio_ = current_ratio; // 依照你上一版的代码赋值
-        } else {
-            target_ratio_ = current_ratio;
-        }
+        target_ratio_ = current_h / current_w;
 
         last_target_center_x_ = current_center_x;
         last_target_w_ = current_w;
@@ -315,21 +388,23 @@ void Deal::calculate_dist(const cv::Mat& dealImage, const std::vector<cv::Rect>&
     }
     else
     {
-        // 【遮挡/消失状态】
-        // 当发生遮挡导致没有框，或者框的高宽比 > 1.2 被我们上面 `continue` 强制过滤掉时，就会进入盲推逻辑！
+        // 纯盲推分支（仅在序号4锁死后有效）
         if (last_frame_has_target_ && missing_frames_ < MAX_MISSING_FRAMES)
         {
             missing_frames_++;
             last_target_center_x_ += target_dx_; 
-            
             dist_pixel = last_target_center_x_ - center_ref;
             lenth_pixel = last_target_w_; 
-            
-            // 盲推期间，target_ratio_ 保持遮挡前最后一次健康的比例不变
         }
         else
         {
+            // 彻底跟丢：重置所有状态，允许重新从 1 开始数数
             last_frame_has_target_ = false;
+            index4_captured_ = false;
+            max_assigned_index_ = 0;
+            last_zone_A_occupied_ = false;
+            last_occlusion_state_ = false;
+            
             missing_frames_ = 0;
             target_dx_ = 0.0f;
             target_ratio_ = 0.0f; 
@@ -338,12 +413,10 @@ void Deal::calculate_dist(const cv::Mat& dealImage, const std::vector<cv::Rect>&
         }
     }
 
-    // 4. 误差拟合与最终物理距离赋值
-    if (lenth_pixel == 0) 
-    {
-        dist_ = 0.0f;
-        return;
-    }
+    // =================================================================
+    // 4. 最终物理距离赋值
+    // =================================================================
+    if (lenth_pixel == 0) { dist_ = 0.0f; return; }
     
     float pd = 28.0f / lenth_pixel;
     pd = std::round(pd * 100) / 100.0f;
@@ -353,9 +426,15 @@ void Deal::calculate_dist(const cv::Mat& dealImage, const std::vector<cv::Rect>&
     if (dist_ < -200.0f) dist_ = -200.0f;
     if (dist_ > 200.0f)  dist_ = 200.0f;
 
-    // 日志打印
-
+    if (camera_backward.is_open()) {
+        camera_backward << "[已锁定目标4] 帧数: " << missing_frames_ 
+                        << " | 推算中心X: " << last_target_center_x_ 
+                        << " | 最近偏移量: " << dist_ 
+                        << " | 高宽比: " << target_ratio_ 
+                        << " | 速度dx: " << target_dx_ << "\n";
+    }
 }
+
 
 bool Deal::deal_frame(const Mat &frame, const cv::Rect_<float>& rect, const cv::Rect2f& rect_gan, std::ostringstream& oss)
 {
@@ -368,6 +447,8 @@ bool Deal::deal_frame(const Mat &frame, const cv::Rect_<float>& rect, const cv::
 
     rect_.x = rect.x + rect.width/2 - 19;
     rect_.y = rect.y - 21 - 11;
+    // rect_.y = rect.y - 26 - 11;
+
 
     if(test_rect_y.is_open()) test_rect_y << rect.y << endl;
     // oss << " ||间隔( " << rect_.y - rect_gan.y + rect_gan.height << " )";
@@ -525,7 +606,11 @@ void Deal::deal(const int& count, const int& count_tai, const cv::Rect2f& rect, 
 
             msg.weapon_state = 1;
             msg.dist_y = 0;
-            if(ok && (record_y_ - now_y_ > 2)) 
+            // if(ok && (record_y_ - now_y_ > 2)) 
+            // {
+            //     msg.ok_assemble = 1;
+            // }
+            if(ok) 
             {
                 msg.ok_assemble = 1;
             }
@@ -648,12 +733,14 @@ void Deal::process_thread_func()
         objs_tai_.clear();
         objs_gan_.clear();
         rects_.clear();
+        rects_both_.clear();
         rects_gan_.clear();
         
         cv::Rect rect_fixed_(298, 230, 70, 65);
         for (const auto& obj : yolo_all_->objs)
         {
             int lab = obj.label;
+            cout << "lab: " << lab << endl;
             switch (lab)
             {
                 case 0: 
@@ -663,11 +750,13 @@ void Deal::process_thread_func()
                     //     << " width: " << obj.rect.width 
                     //     << " height: " << obj.rect.height << endl;
                     rects_.push_back(obj.rect);
+                    rects_both_.push_back(obj.rect);
                     break;
                 case 1: objs_tai_.push_back(obj); break;
                 case 2: 
-                        objs_gan_.push_back(obj); 
-                        rects_gan_.push_back(obj.rect);
+                    rects_both_.push_back(obj.rect);
+                        // objs_gan_.push_back(obj); 
+                        // rects_gan_.push_back(obj.rect);
                     break;
             default:
                 break;
@@ -684,7 +773,9 @@ void Deal::process_thread_func()
         // else
         // {
         // } 
-        calculate_dist(dealImage, rects_);
+
+
+        calculate_dist(dealImage, rects_both_);
 
         filterAndSortWeapons(rects_, objs_weapon_, 0.4);
         if(rects_.size() != 0) 

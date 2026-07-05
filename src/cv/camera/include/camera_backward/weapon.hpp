@@ -83,6 +83,7 @@ private:
     const int MAX_MISSING_FRAMES = 20;  // 允许最大遮挡外推的帧数（按60fps算大约0.33秒）
 
 private:
+    std::vector<cv::Rect>    rects_both_;               // weapon and gun
     int max_assigned_index_ = 0;        // 当前记录的最高序号 (0, 1, 2, 3, 4)
     bool index4_captured_ = false;      // 是否成功捕获并锁定了序号4
 
